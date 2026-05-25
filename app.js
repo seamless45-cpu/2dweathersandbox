@@ -382,8 +382,8 @@ const guiControls_default = {
   sunAngle : 9.9,
   dayNightCycle : true,
   accelerateNight : true,
-  greenhouseGases : 0.001,
-  waterGreenHouseEffect : 0.0015,
+  greenhouseGases : 0.0010,
+  waterGreenHouseEffect : 0.0023,
   IR_rate : 1.0,
   tool : 'TOOL_NONE',
   brushSize : 20,
@@ -5854,7 +5854,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       if (!guiControls.paused) { // Simulation part
 
-        let nightAccelerationActive = !airplaneMode && guiControls.dayNightCycle && guiControls.accelerateNight && guiControls.sunAngle < 0.;
+        let nightAccelerationActive = !airplaneMode && guiControls.dayNightCycle && guiControls.accelerateNight && (guiControls.sunAngle < 0. || guiControls.sunAngle > 180.);
 
         if (guiControls.dayNightCycle) {
           if (airplaneMode) {
