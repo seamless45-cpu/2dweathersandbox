@@ -5436,9 +5436,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function generateLightningTexture(i, imgData)
   {
-    lightningTextures[i] = gl.createTexture();
+    if (!lightningTextures[i])
+      lightningTextures[i] = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, lightningTextures[i]);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, imgData.width, imgData.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, imgData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, imgData.width, imgData.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, imgData);
     // gl.generateMipmap(gl.TEXTURE_2D);                                                // optional
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); // LINEAR_MIPMAP_LINEAR
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -5446,6 +5447,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
+  for (let i = 0; i < numLightningTextures; i++) {
+    lightningTextures[i] = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, lightningTextures[i]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([ 0, 0, 0, 255 ]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  }
 
   for (let i = 0; i < numLightningTextures; i++) {
     const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
@@ -5504,6 +5514,28 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
   }
 
+  function createProfileTexture(profile)
+  {
+    const width = Math.ceil(profile.length / 4);
+    const packedProfile = new Float32Array(width * 4);
+    packedProfile.set(profile);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, 1, 0, gl.RGBA, gl.FLOAT, packedProfile);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    return texture;
+  }
+
+  const initialProfileTexture = createProfileTexture(initial_T);
+  const realWorldSoundingTextureT = createProfileTexture(realWorldSounding_T);
+  const realWorldSoundingTextureW = createProfileTexture(realWorldSounding_W);
+  const realWorldSoundingTextureVel = createProfileTexture(realWorldSounding_Vel);
+
   cellHeight = guiControls.simHeight / sim_res_y; // in meters
 
   // Set constant uniforms
@@ -5519,18 +5551,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(advectionProgram, 'baseTex'), 0);
   gl.uniform1i(gl.getUniformLocation(advectionProgram, 'waterTex'), 1);
   gl.uniform1i(gl.getUniformLocation(advectionProgram, 'wallTex'), 2);
+  gl.uniform1i(gl.getUniformLocation(advectionProgram, 'initialProfileTex'), 3);
+  gl.uniform1i(gl.getUniformLocation(advectionProgram, 'realWorldSoundingTexT'), 4);
+  gl.uniform1i(gl.getUniformLocation(advectionProgram, 'realWorldSoundingTexW'), 5);
+  gl.uniform1i(gl.getUniformLocation(advectionProgram, 'realWorldSoundingTexVel'), 6);
   gl.uniform2f(gl.getUniformLocation(advectionProgram, 'texelSize'), texelSizeX, texelSizeY);
   gl.uniform2f(gl.getUniformLocation(advectionProgram, 'resolution'), sim_res_x, sim_res_y);
-  // gl.uniform1fv(
-  // gl.getUniformLocation(advectionProgram, 'initial_T'), initial_T);
-  gl.uniform4fv(gl.getUniformLocation(advectionProgram, 'initial_Tv'), initial_T);
   gl.uniform1f(gl.getUniformLocation(advectionProgram, 'dryLapse'), dryLapse);
   gl.uniform1f(gl.getUniformLocation(advectionProgram, 'waterTemperature'),
                CtoK(guiControls.waterTemperature)); // can be changed by GUI input
-
-  gl.uniform4fv(gl.getUniformLocation(advectionProgram, 'realWorldSounding_Tv'), realWorldSounding_T);
-  gl.uniform4fv(gl.getUniformLocation(advectionProgram, 'realWorldSounding_Wv'), realWorldSounding_W);
-  gl.uniform4fv(gl.getUniformLocation(advectionProgram, 'realWorldSounding_Velv'), realWorldSounding_Vel);
 
   gl.useProgram(pressureProgram);
   gl.uniform1i(gl.getUniformLocation(pressureProgram, 'baseTex'), 0);
@@ -5932,6 +5961,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.bindTexture(gl.TEXTURE_2D, waterTexture_0);
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, wallTexture_0);
+            gl.activeTexture(gl.TEXTURE3);
+            gl.bindTexture(gl.TEXTURE_2D, initialProfileTexture);
+            gl.activeTexture(gl.TEXTURE4);
+            gl.bindTexture(gl.TEXTURE_2D, realWorldSoundingTextureT);
+            gl.activeTexture(gl.TEXTURE5);
+            gl.bindTexture(gl.TEXTURE_2D, realWorldSoundingTextureW);
+            gl.activeTexture(gl.TEXTURE6);
+            gl.bindTexture(gl.TEXTURE_2D, realWorldSoundingTextureVel);
             gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuff_1);
             gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2 ]);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
