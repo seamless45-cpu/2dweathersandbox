@@ -120,8 +120,8 @@ void main()
 
           vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
 
-          const float lightningCloudDensityThreshold = 1.2;          // lower threshold makes storm clouds eligible sooner
-          const float lightningChanceMultiplier = 0.02;              // higher multiplier makes eligible clouds strike more often
+          const float lightningCloudDensityThreshold = 0.72;          // lower threshold makes storm clouds eligible sooner
+          const float lightningChanceMultiplier = 0.072;              // higher multiplier makes eligible clouds strike more often
 
           float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
 
@@ -130,7 +130,7 @@ void main()
           const float minIterationsSinceLastLightningBolt = 12.; // shorter cooldown allows more frequent strikes
 
           if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
-              random2d(vec2(base[TEMPERATURE] * 0.2324, water[TOTAL] * 7.7)) < lightningSpawnChance) { // Spawn lightning
+              random2d(vec2(base[TEMPERATURE] * 0.72, water[TOTAL] * 72)) < lightningSpawnChance) { // Spawn lightning
             lightningSpawned = true;
             isActive = false;
             gl_PointSize = 1.0;
