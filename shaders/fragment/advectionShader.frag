@@ -57,6 +57,7 @@ uniform sampler2D realWorldSoundingTexVel;
 
 float getProfileValue(sampler2D profileTex, int y)
 {
+  // Profiles are uploaded as a 1-row RGBA32F texture with four vertical samples per texel.
   vec4 texel = texelFetch(profileTex, ivec2(y / 4, 0), 0);
   return texel[y % 4];
 }
