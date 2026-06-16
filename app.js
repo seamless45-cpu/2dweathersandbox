@@ -6649,9 +6649,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         let wallTextureValues = new Int8Array(4 * sim_res_x * sim_res_y);
         gl.readPixels(0, 0, sim_res_x, sim_res_y, gl.RGBA_INTEGER, gl.BYTE, wallTextureValues);
 
-        let precipBufferValues = new ArrayBuffer(rainDrops.length * Float32Array.BYTES_PER_ELEMENT);
+        let precipBufferValues = new ArrayBuffer(NUM_DROPLETS * valsPerDroplet * Float32Array.BYTES_PER_ELEMENT);
+        let precipBufferArray = new Float32Array(precipBufferValues);
         gl.bindBuffer(gl.ARRAY_BUFFER, precipVertexBuffer_0);
-        gl.getBufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(precipBufferValues));
+        gl.getBufferSubData(gl.ARRAY_BUFFER, 0, precipBufferArray);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); // unbind again
 
 
