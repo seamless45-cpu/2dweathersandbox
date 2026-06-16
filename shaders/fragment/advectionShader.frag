@@ -50,15 +50,21 @@ uniform vec2 resolution;
 
 vec2 texelSize;
 
-uniform vec4 initial_Tv[126];
-uniform vec4 realWorldSounding_Tv[126];
-uniform vec4 realWorldSounding_Wv[126];
-uniform vec4 realWorldSounding_Velv[126];
+uniform sampler2D initialProfileTex;
+uniform sampler2D realWorldSoundingTexT;
+uniform sampler2D realWorldSoundingTexW;
+uniform sampler2D realWorldSoundingTexVel;
 
-float getInitialT(int y) { return initial_Tv[y / 4][y % 4]; }
-float getRealWorldSounding_T(int y) { return (realWorldSounding_Tv[y / 4][y % 4] + realWorldSounding_Tv[(y - 1) / 4][(y - 1) % 4]) / 2.; }
-float getRealWorldSounding_W(int y) { return (realWorldSounding_Wv[y / 4][y % 4] + realWorldSounding_Wv[(y - 1) / 4][(y - 1) % 4]) / 2.; }
-float getRealWorldSounding_Vel(int y) { return (realWorldSounding_Velv[y / 4][y % 4] + realWorldSounding_Velv[(y - 1) / 4][(y - 1) % 4]) / 2.; }
+float getProfileValue(sampler2D profileTex, int y)
+{
+  vec4 texel = texelFetch(profileTex, ivec2(y / 4, 0), 0);
+  return texel[y % 4];
+}
+
+float getInitialT(int y) { return getProfileValue(initialProfileTex, y); }
+float getRealWorldSounding_T(int y) { return (getProfileValue(realWorldSoundingTexT, y) + getProfileValue(realWorldSoundingTexT, max(y - 1, 0))) / 2.; }
+float getRealWorldSounding_W(int y) { return (getProfileValue(realWorldSoundingTexW, y) + getProfileValue(realWorldSoundingTexW, max(y - 1, 0))) / 2.; }
+float getRealWorldSounding_Vel(int y) { return (getProfileValue(realWorldSoundingTexVel, y) + getProfileValue(realWorldSoundingTexVel, max(y - 1, 0))) / 2.; }
 
 #include "common.glsl"
 
