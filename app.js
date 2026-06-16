@@ -5436,9 +5436,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function generateLightningTexture(i, imgData)
   {
-    lightningTextures[i] = gl.createTexture();
+    if (!lightningTextures[i])
+      lightningTextures[i] = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, lightningTextures[i]);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, imgData.width, imgData.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, imgData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, imgData.width, imgData.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, imgData);
     // gl.generateMipmap(gl.TEXTURE_2D);                                                // optional
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); // LINEAR_MIPMAP_LINEAR
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -5446,6 +5447,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
+  for (let i = 0; i < numLightningTextures; i++) {
+    lightningTextures[i] = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, lightningTextures[i]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([ 0, 0, 0, 255 ]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  }
 
   for (let i = 0; i < numLightningTextures; i++) {
     const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
