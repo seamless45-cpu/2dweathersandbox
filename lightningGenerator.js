@@ -51,7 +51,7 @@ function generateLightningBolt(width, height)
     startY = nextY;
 
 
-    if (Math.random() < 0.015 * (1. - nextY / height)) { // branch
+    if (Math.random() < 0.035 * (1. - nextY / height)) { // branch
       ctx.strokeStyle = genLightningColor(lineWidth);
       ctx.stroke();
       drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, lineWidth * 0.5 * Math.random());
@@ -89,7 +89,7 @@ function generateLightningBolt(width, height)
       startX = nextX;
       startY = nextY;
 
-      if (Math.random() < 0.018) { // reduce width
+      if (Math.random() < 0.025) { // reduce width
 
         ctx.strokeStyle = genLightningColor(line_width);
         ctx.stroke();
@@ -98,7 +98,7 @@ function generateLightningBolt(width, height)
         if (line_width < 0.1)
           return;
 
-        if (Math.random() < 0.1) { // branch 0.005
+        if (Math.random() < 0.2) { // secondary branch
 
           drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, line_width);
         }
