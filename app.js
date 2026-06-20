@@ -5202,7 +5202,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const colorScalesTexture = gl.createTexture();
 
   const lightningTextures = [];
-  const numLightningTextures = 3;
+  const numLightningTextures = 12;
 
 
   frameBuff_0 = gl.createFramebuffer(); // global for weather stations
