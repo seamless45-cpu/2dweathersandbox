@@ -5459,16 +5459,31 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
-  for (let i = 0; i < numLightningTextures; i++) {
-    const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
-    lightningGeneratorWorker.onmessage = (imgElement) => {
-      // downloadImageData(imgElement.data); // for debugging
+  function generateLightningTextureAsync(i)
+  {
+    return new Promise((resolve) => {
+      const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
+      lightningGeneratorWorker.onmessage = (imgElement) => {
+        // downloadImageData(imgElement.data); // for debugging
 
-      generateLightningTexture(i, imgElement.data);
-    };
+        generateLightningTexture(i, imgElement.data);
+        lightningGeneratorWorker.terminate();
+        resolve();
+      };
+      lightningGeneratorWorker.onerror = (error) => {
+        console.error('Error generating lightning texture:', error);
+        lightningGeneratorWorker.terminate();
+        resolve();
+      };
 
-    lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
+      lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
+    });
   }
+
+  (async () => {
+    for (let i = 0; i < numLightningTextures; i++)
+      await generateLightningTextureAsync(i);
+  })();
 
   await loadingBar.set(90, 'Setting up FBO`s');
 
