@@ -55,16 +55,44 @@ uniform sampler2D realWorldSoundingTexT;
 uniform sampler2D realWorldSoundingTexW;
 uniform sampler2D realWorldSoundingTexVel;
 
-float getProfileValue(sampler2D profileTex, int y)
+float getProfileChannel(vec4 texel, int y)
 {
-  vec4 texel = texelFetch(profileTex, ivec2(y / 4, 0), 0);
-  return texel[y % 4];
+  // Profiles are uploaded as a 1-row RGBA32F texture with four vertical samples per texel.
+  int channel = y % 4;
+  if (channel == 0)
+    return texel.x;
+  if (channel == 1)
+    return texel.y;
+  if (channel == 2)
+    return texel.z;
+  return texel.w;
 }
 
-float getInitialT(int y) { return getProfileValue(initialProfileTex, y); }
-float getRealWorldSounding_T(int y) { return (getProfileValue(realWorldSoundingTexT, y) + getProfileValue(realWorldSoundingTexT, max(y - 1, 0))) / 2.; }
-float getRealWorldSounding_W(int y) { return (getProfileValue(realWorldSoundingTexW, y) + getProfileValue(realWorldSoundingTexW, max(y - 1, 0))) / 2.; }
-float getRealWorldSounding_Vel(int y) { return (getProfileValue(realWorldSoundingTexVel, y) + getProfileValue(realWorldSoundingTexVel, max(y - 1, 0))) / 2.; }
+float getInitialT(int y)
+{
+  return getProfileChannel(texelFetch(initialProfileTex, ivec2(y / 4, 0), 0), y);
+}
+
+float getRealWorldSounding_T(int y)
+{
+  return (getProfileChannel(texelFetch(realWorldSoundingTexT, ivec2(y / 4, 0), 0), y) +
+          getProfileChannel(texelFetch(realWorldSoundingTexT, ivec2(max(y - 1, 0) / 4, 0), 0), max(y - 1, 0))) /
+         2.;
+}
+
+float getRealWorldSounding_W(int y)
+{
+  return (getProfileChannel(texelFetch(realWorldSoundingTexW, ivec2(y / 4, 0), 0), y) +
+          getProfileChannel(texelFetch(realWorldSoundingTexW, ivec2(max(y - 1, 0) / 4, 0), 0), max(y - 1, 0))) /
+         2.;
+}
+
+float getRealWorldSounding_Vel(int y)
+{
+  return (getProfileChannel(texelFetch(realWorldSoundingTexVel, ivec2(y / 4, 0), 0), y) +
+          getProfileChannel(texelFetch(realWorldSoundingTexVel, ivec2(max(y - 1, 0) / 4, 0), 0), max(y - 1, 0))) /
+         2.;
+}
 
 #include "common.glsl"
 
