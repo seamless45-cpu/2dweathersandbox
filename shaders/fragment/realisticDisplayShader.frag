@@ -108,7 +108,7 @@ vec3 getWallColor(float depth)
   return color;
 }
 
-const vec2 lightningTexRes = vec2(2500, 5000);
+const vec2 lightningTexRes = vec2(1024, 2048);
 const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 
 float calcLightningTime(float startIterNum)

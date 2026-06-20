@@ -5202,7 +5202,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const colorScalesTexture = gl.createTexture();
 
   const lightningTextures = [];
-  const numLightningTextures = 10;
+  const numLightningTextures = 5;
+  const lightningTextureWidth = 1024;
+  const lightningTextureHeight = 2048;
 
 
   frameBuff_0 = gl.createFramebuffer(); // global for weather stations
@@ -5465,7 +5467,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       generateLightningTexture(i, imgElement.data);
     };
 
-    lightningGeneratorWorker.postMessage({width : 2500, height : 5000}); // 10000 5000
+    lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
   }
 
   await loadingBar.set(90, 'Setting up FBO`s');
