@@ -45,7 +45,7 @@ function generateLightningBolt(width, height)
 
     angle += (Math.random() - 0.5) * 1.4;  // 0.7
 
-    angle -= (angle - targetAngle) * 0.16; // keep it going in a general direction
+    angle -= (angle - targetAngle) * 0.07; // keep it going in a general direction
 
     ctx.lineTo(nextX, nextY);
 
@@ -92,7 +92,7 @@ function generateLightningBolt(width, height)
       startX = nextX;
       startY = nextY;
 
-      if (Math.random() < 0.005) { // reduce width
+      if (Math.random() < 0.003) { // reduce width
 
         ctx.strokeStyle = genLightningColor(line_width);
         ctx.stroke();
