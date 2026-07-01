@@ -120,8 +120,8 @@ void main()
 
           vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
 
-          const float lightningCloudDensityThreshold = 0.5;          // lower threshold makes storm clouds eligible sooner
-          const float lightningChanceMultiplier = 0.12;              // higher multiplier makes eligible clouds strike more often
+          const float lightningCloudDensityThreshold = 0.72;          // lower threshold makes storm clouds eligible sooner
+          const float lightningChanceMultiplier = 0.122;              // higher multiplier makes eligible clouds strike more often
 
           float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
 
@@ -130,13 +130,13 @@ void main()
           const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
 
           if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
-              random2d(vec2(base[TEMPERATURE] * 0.2575, water[TOTAL] * 7.7)) < lightningSpawnChance) { // Spawn lightning
+              random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
             lightningSpawned = true;
             isActive = false;
             gl_PointSize = 1.0;
             feedback.xy = texCoord;
             feedback[START_ITERNUM] = iterNum;
-            feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 6.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
+            feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.78 + random2d(texCoord), 0.2, 4.0);
             gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
           }
         } else {
