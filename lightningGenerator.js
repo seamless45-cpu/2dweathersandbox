@@ -67,9 +67,10 @@ function generateLightningBolt(width, height)
   ctx.stroke();
 
 
+  // Get the image data and convert to a mobile-friendly format
   const imgData = ctx.getImageData(0, 0, width, height);
   
-  // Convert to structured cloneable format for postMessage compatibility
+  // Return in a format that works across all devices
   return {
     data: imgData.data,
     width: width,
