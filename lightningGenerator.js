@@ -43,7 +43,7 @@ function generateLightningBolt(width, height)
     const nextX = startX + Math.sin(angle);
     const nextY = startY + Math.cos(angle);
 
-    angle += (Math.random() - 0.4) * 1.5;  // 0.7
+    angle += (Math.random() - 0.7) * 1.4;  // 0.7
 
     angle -= (angle - targetAngle) * 0.07; // keep it going in a general direction
 
@@ -53,11 +53,11 @@ function generateLightningBolt(width, height)
     startY = nextY;
 
 
-    if (numBranches < maxBranches && Math.random() < 0.057 * (1. - nextY / height)) { // branch
+    if (numBranches < maxBranches && Math.random() < 0.052 * (1. - nextY / height)) { // branch
       ctx.strokeStyle = genLightningColor(lineWidth);
       ctx.stroke();
       numBranches++;
-      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.57) * 2.5, lineWidth * 0.5 * Math.random());
+      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, lineWidth * 0.5 * Math.random());
       ctx.beginPath();
       ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
       ctx.lineWidth = lineWidth;
@@ -83,7 +83,7 @@ function generateLightningBolt(width, height)
       const nextX = startX + Math.sin(angle);
       const nextY = startY + Math.cos(angle);
 
-      angle += (Math.random() - 0.5) * 0.7;
+      angle += (Math.random() - 0.5) * 1.4;
 
       angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
 
