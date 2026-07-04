@@ -5469,9 +5469,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const imageData = new ImageData(new Uint8ClampedArray(msg.data), msg.width, msg.height);
   
   generateLightningTexture(i, imageData);
-        // downloadImageData(imgElement.data); // for debugging
-
-        generateLightningTexture(i, imgElement.data);
+        // 67
         lightningGeneratorWorker.terminate();
         resolve();
       };
