@@ -67,7 +67,14 @@ function generateLightningBolt(width, height)
   ctx.stroke();
 
 
-  return ctx.getImageData(0, 0, width, height);
+  const imgData = ctx.getImageData(0, 0, width, height);
+  
+  // Convert to structured cloneable format for postMessage compatibility
+  return {
+    data: imgData.data,
+    width: width,
+    height: height
+  };
 
 
   function drawBranch(startX, startY, targetAngle, line_width)
