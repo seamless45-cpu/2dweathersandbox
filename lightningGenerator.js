@@ -92,7 +92,7 @@ function generateLightningBolt(width, height)
       startX = nextX;
       startY = nextY;
 
-      if (Math.random() < 0.002) { // reduce width
+      if (Math.random() < 0.001) { // reduce width
 
         ctx.strokeStyle = genLightningColor(line_width);
         ctx.stroke();
