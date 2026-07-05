@@ -5495,7 +5495,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
         }
 
-        if (lineWidth > 0.6 && Math.random() < 0.025 * (1.0 - y / height))
+        if (lineWidth > 0.6 && Math.random() < 0.01 * (1.0 - y / height)) // branch
           drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.45, Math.floor(maxLength * 0.35));
       }
     }
