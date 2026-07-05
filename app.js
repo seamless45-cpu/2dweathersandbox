@@ -5203,8 +5203,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   const lightningTextures = [];
   const numLightningTextures = 5;
-  const lightningTextureWidth = 1024;
-  const lightningTextureHeight = 2048;
+  const lightningTextureWidth = 512;
+  const lightningTextureHeight = 1024;
 
 
   frameBuff_0 = gl.createFramebuffer(); // global for weather stations
@@ -5459,31 +5459,77 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
+  function generateLightningTextureOnMainThread(i)
+  {
+    if (typeof generateLightningBoltImageData != 'function') {
+      console.error('Lightning generator core was not loaded.');
+      return;
+    }
+    const imgData =
+        generateLightningBoltImageData(lightningTextureWidth, lightningTextureHeight, (width, height) => {
+          const fallbackCanvas = document.createElement('canvas');
+          fallbackCanvas.width = width;
+          fallbackCanvas.height = height;
+          return fallbackCanvas;
+        });
+    generateLightningTexture(i, imgData);
+  }
+
   function generateLightningTextureAsync(i)
   {
     return new Promise((resolve) => {
-      const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
+      let lightningGeneratorWorker;
+      let finished = false;
+      let timeoutId = null;
+      const finish = () => {
+        if (finished)
+          return false;
+        finished = true;
+        clearTimeout(timeoutId);
+        if (lightningGeneratorWorker)
+          lightningGeneratorWorker.terminate();
+        resolve();
+        return true;
+      };
+      try {
+        lightningGeneratorWorker = new Worker('./lightningGenerator.js');
+      } catch (error) {
+        console.warn('Falling back to main-thread lightning generation:', error);
+        generateLightningTextureOnMainThread(i);
+        finish();
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        if (!finish())
+          return;
+        console.warn('Falling back to main-thread lightning generation: worker timed out.');
+        generateLightningTextureOnMainThread(i);
+      }, 5000);
       lightningGeneratorWorker.onmessage = (imgElement) => {
         // downloadImageData(imgElement.data); // for debugging
 
-        generateLightningTexture(i, imgElement.data);
-        lightningGeneratorWorker.terminate();
-        resolve();
+        if (!finish())
+          return;
+        if (imgElement.data) {
+          generateLightningTexture(i, imgElement.data);
+        } else {
+          console.warn('Falling back to main-thread lightning generation: worker returned no image data.');
+          generateLightningTextureOnMainThread(i);
+        }
       };
       lightningGeneratorWorker.onerror = (error) => {
-        console.error('Error generating lightning texture:', error);
-        lightningGeneratorWorker.terminate();
-        resolve();
+        if (!finish())
+          return;
+        console.warn('Falling back to main-thread lightning generation:', error);
+        generateLightningTextureOnMainThread(i);
       };
 
       lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
     });
   }
 
-  (async () => {
-    for (let i = 0; i < numLightningTextures; i++)
-      await generateLightningTextureAsync(i);
-  })();
+  for (let i = 0; i < numLightningTextures; i++)
+    await generateLightningTextureAsync(i);
 
   await loadingBar.set(90, 'Setting up FBO`s');
 
