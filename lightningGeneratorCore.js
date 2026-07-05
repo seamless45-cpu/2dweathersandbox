@@ -33,7 +33,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
     const nextX = startX + Math.sin(angle);
     const nextY = startY + Math.cos(angle);
 
-    angle += (Math.random() - 0.9) * 1.4;  // 0.7
+    angle += (Math.random() - 0.6) * 1.4;  // 0.7
 
     angle -= (angle - targetAngle) * 0.07; // keep it going in a general direction
 
