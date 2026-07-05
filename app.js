@@ -5463,13 +5463,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   {
     return new Promise((resolve) => {
       const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
-      lightningGeneratorWorker.onmessage = (event) => {
-  const msg = event.data;
-  // Reconstruct ImageData from structured cloneable format
-  const imageData = new ImageData(new Uint8ClampedArray(msg.data), msg.width, msg.height);
-  
-  generateLightningTexture(i, imageData);
-        // 67
+      lightningGeneratorWorker.onmessage = (imgElement) => {
+        // downloadImageData(imgElement.data); // for debugging
+
+        generateLightningTexture(i, imgElement.data);
         lightningGeneratorWorker.terminate();
         resolve();
       };
