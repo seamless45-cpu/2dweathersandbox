@@ -1,14 +1,17 @@
 onmessage = (event) => {
   const msg = event.data;
   // console.log(msg);
-  let imgElement = generateLightningBolt(msg.width, msg.height);
+  if (typeof OffscreenCanvas == 'undefined') {
+    throw new Error('OffscreenCanvas is not available in this worker.');
+  }
+  let imgElement = generateLightningBolt(msg.width, msg.height, (width, height) => new OffscreenCanvas(width, height));
   postMessage(imgElement);
 };
 
 
-function generateLightningBolt(width, height)
+function generateLightningBolt(width, height, createCanvas)
 {
-  const lightningCanvas = new OffscreenCanvas(width, height);
+  const lightningCanvas = createCanvas(width, height);
   const ctx = lightningCanvas.getContext('2d');
 
   ctx.clearRect(0, 0, width, height);

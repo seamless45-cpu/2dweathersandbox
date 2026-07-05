@@ -5459,19 +5459,151 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
+  function generateLightningBoltImageData(width, height, createCanvas)
+  {
+    const lightningCanvas = createCanvas(width, height);
+    const ctx = lightningCanvas.getContext('2d');
+
+    ctx.clearRect(0, 0, width, height);
+
+    function genLightningColor(lineWidth)
+    {
+      const colR = 12;
+      const colG = 12;
+      const colB = 12;
+      const brightness = Math.pow(lineWidth, 2.0);
+      return `rgb(${colR * brightness}, ${colG * brightness}, ${colB * brightness})`;
+    }
+
+    ctx.beginPath();
+
+    let startX = width / 2.0;
+    let startY = 0;
+    let angle = Math.PI / 6.;
+    let lineWidth = 9.0;
+    const targetAngle = 0.0;
+    const maxBranches = 96;
+    let numBranches = 0;
+
+    ctx.moveTo(startX, startY);
+
+    ctx.lineWidth = lineWidth;
+
+    while (startY < height) {
+
+      const nextX = startX + Math.sin(angle);
+      const nextY = startY + Math.cos(angle);
+
+      angle += (Math.random() - 0.7) * 1.4;  // 0.7
+
+      angle -= (angle - targetAngle) * 0.07; // keep it going in a general direction
+
+      ctx.lineTo(nextX, nextY);
+
+      startX = nextX;
+      startY = nextY;
+
+      if (numBranches < maxBranches && Math.random() < 0.052 * (1. - nextY / height)) { // branch
+        ctx.strokeStyle = genLightningColor(lineWidth);
+        ctx.stroke();
+        numBranches++;
+        drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, lineWidth * 0.5 * Math.random());
+        ctx.beginPath();
+        ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
+        ctx.lineWidth = lineWidth;
+      }
+    }
+    ctx.strokeStyle = genLightningColor(lineWidth);
+    ctx.stroke();
+
+    return ctx.getImageData(0, 0, width, height);
+
+    function drawBranch(startX, startY, targetAngle, line_width)
+    {
+      let angle = targetAngle;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineWidth = line_width;
+
+      while (startY < height) {
+
+        const nextX = startX + Math.sin(angle);
+        const nextY = startY + Math.cos(angle);
+
+        angle += (Math.random() - 0.5) * 0.7;
+
+        angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
+
+        ctx.lineTo(nextX, nextY);
+
+        startX = nextX;
+        startY = nextY;
+
+        if (Math.random() < 0.002) { // reduce width
+
+          ctx.strokeStyle = genLightningColor(line_width);
+          ctx.stroke();
+          line_width -= 0.2;
+
+          if (line_width < 0.1)
+            return;
+
+          if (numBranches < maxBranches && Math.random() < 0.25) { // secondary branch
+
+            numBranches++;
+            drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, line_width);
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
+          ctx.lineWidth = line_width;
+        }
+      }
+      ctx.strokeStyle = genLightningColor(line_width);
+      ctx.stroke();
+    }
+  }
+
+  function generateLightningTextureOnMainThread(i)
+  {
+    const imgData =
+        generateLightningBoltImageData(lightningTextureWidth, lightningTextureHeight, (width, height) => {
+          const fallbackCanvas = document.createElement('canvas');
+          fallbackCanvas.width = width;
+          fallbackCanvas.height = height;
+          return fallbackCanvas;
+        });
+    generateLightningTexture(i, imgData);
+  }
+
   function generateLightningTextureAsync(i)
   {
     return new Promise((resolve) => {
-      const lightningGeneratorWorker = new Worker('./lightningGenerator.js');
+      let lightningGeneratorWorker;
+      try {
+        lightningGeneratorWorker = new Worker('./lightningGenerator.js');
+      } catch (error) {
+        console.warn('Falling back to main-thread lightning generation:', error);
+        generateLightningTextureOnMainThread(i);
+        resolve();
+        return;
+      }
       lightningGeneratorWorker.onmessage = (imgElement) => {
         // downloadImageData(imgElement.data); // for debugging
 
-        generateLightningTexture(i, imgElement.data);
+        if (imgElement.data) {
+          generateLightningTexture(i, imgElement.data);
+        } else {
+          console.warn('Falling back to main-thread lightning generation: worker returned no image data.');
+          generateLightningTextureOnMainThread(i);
+        }
         lightningGeneratorWorker.terminate();
         resolve();
       };
       lightningGeneratorWorker.onerror = (error) => {
-        console.error('Error generating lightning texture:', error);
+        console.warn('Falling back to main-thread lightning generation:', error);
+        generateLightningTextureOnMainThread(i);
         lightningGeneratorWorker.terminate();
         resolve();
       };
