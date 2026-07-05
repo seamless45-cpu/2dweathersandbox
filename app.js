@@ -5461,8 +5461,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function generateFastLightningTexture(i)
   {
-    const width = 128;
-    const height = 256;
+    const width = 512;
+    const height = 1024;
     const data = new Uint8ClampedArray(width * height * 4);
 
     function setPixel(x, y, brightness)
