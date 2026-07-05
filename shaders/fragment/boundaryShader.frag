@@ -307,9 +307,7 @@ void main()
 
       wall[VEGETATION] = wallX0Ym[VEGETATION];                     // vegetation is copied from below
 
-      // base[PRESSURE] *= 0.995; // 0.999
-
-      // base[PRESSURE]  += 0.001; // add air pressure at the suface. makes air rise everywhere and creates huge cells
+      base[PRESSURE]  += 0.001; // add air pressure at the surface. makes air rise everywhere and creates huge cells
 
       vec4 waterInSurface = texture(waterTex, texCoordX0Ym);
 
@@ -329,22 +327,22 @@ void main()
           int texFragX = int(fragCoord.x) % 80;
 
           if (wall[VERT_DISTANCE] == 5 && (texFragX == 18 || texFragX == 22)) { // cooling towers
-            water[TOTAL] += 2.5;
+            water[TOTAL] += 2.75;
             // base[TEMPERATURE] += 0.02;
             base.xy *= 0.5;
             base.y += 0.05;
           }
 
           else if (wall[VERT_DISTANCE] == 6 && texFragX == 29) { // smoke stack
-            water[SMOKE] += 0.12;
-            base[TEMPERATURE] += 0.02;
+            water[SMOKE] += 0.24;
+            base[TEMPERATURE] += 0.12;
             base.xy *= 0.5;
           }
         }
         // nobreak!
       case WALLTYPE_URBAN:
-        water[SMOKE] += 0.000004; // Urban produces smog with tiny vapors
-        water[TOTAL] += 0.000008;
+        water[SMOKE] += 0.00004; // Urban produces smog
+        water[TOTAL] += 0.00008; // produces with water vapor cuz of water areas
         // nobreak!
       case WALLTYPE_LAND:
         if (wall[VERT_DISTANCE] <= wallVerticalInfluence) {
