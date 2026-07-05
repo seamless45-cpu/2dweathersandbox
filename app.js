@@ -5459,20 +5459,49 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
-  function generateLightningTextureOnMainThread(i)
+  function generateFastLightningTexture(i)
   {
-    if (typeof generateLightningBoltImageData != 'function') {
-      console.error('Lightning generator core was not loaded.');
-      return;
+    const width = 128;
+    const height = 256;
+    const data = new Uint8ClampedArray(width * height * 4);
+
+    function setPixel(x, y, brightness)
+    {
+      if (x < 0 || x >= width || y < 0 || y >= height)
+        return;
+      const index = (Math.floor(y) * width + Math.floor(x)) * 4;
+      const value = Math.max(data[index], brightness);
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+      data[index + 3] = 255;
     }
-    const imgData =
-        generateLightningBoltImageData(lightningTextureWidth, lightningTextureHeight, (width, height) => {
-          const fallbackCanvas = document.createElement('canvas');
-          fallbackCanvas.width = width;
-          fallbackCanvas.height = height;
-          return fallbackCanvas;
-        });
-    generateLightningTexture(i, imgData);
+
+    function drawBolt(startX, startY, angle, lineWidth, maxLength)
+    {
+      let x = startX;
+      let y = startY;
+      for (let step = 0; step < maxLength && y < height; step++) {
+        x += Math.sin(angle) * 1.6;
+        y += Math.cos(angle) * 1.6;
+        angle += (Math.random() - 0.55) * 0.55;
+        angle -= angle * 0.08;
+
+        const radius = Math.max(1, Math.round(lineWidth));
+        for (let yy = -radius; yy <= radius; yy++) {
+          for (let xx = -radius; xx <= radius; xx++) {
+            if (xx * xx + yy * yy <= radius * radius)
+              setPixel(x + xx, y + yy, 255);
+          }
+        }
+
+        if (lineWidth > 0.6 && Math.random() < 0.025 * (1.0 - y / height))
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.45, Math.floor(maxLength * 0.35));
+      }
+    }
+
+    drawBolt(width / 2, 0, Math.PI / 12, 2.5, height);
+    generateLightningTexture(i, new ImageData(data, width, height));
   }
 
   function generateLightningTextureAsync(i)
@@ -5494,16 +5523,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       try {
         lightningGeneratorWorker = new Worker('./lightningGenerator.js');
       } catch (error) {
-        console.warn('Falling back to main-thread lightning generation:', error);
-        generateLightningTextureOnMainThread(i);
+        console.warn('Falling back to fast lightning texture generation:', error);
+        generateFastLightningTexture(i);
         finish();
         return;
       }
       timeoutId = setTimeout(() => {
         if (!finish())
           return;
-        console.warn('Falling back to main-thread lightning generation: worker timed out.');
-        generateLightningTextureOnMainThread(i);
+        console.warn('Falling back to fast lightning texture generation: worker timed out.');
+        generateFastLightningTexture(i);
       }, 5000);
       lightningGeneratorWorker.onmessage = (imgElement) => {
         // downloadImageData(imgElement.data); // for debugging
@@ -5513,23 +5542,22 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         if (imgElement.data) {
           generateLightningTexture(i, imgElement.data);
         } else {
-          console.warn('Falling back to main-thread lightning generation: worker returned no image data.');
-          generateLightningTextureOnMainThread(i);
+          console.warn('Falling back to fast lightning texture generation: worker returned no image data.');
+          generateFastLightningTexture(i);
         }
       };
       lightningGeneratorWorker.onerror = (error) => {
         if (!finish())
           return;
-        console.warn('Falling back to main-thread lightning generation:', error);
-        generateLightningTextureOnMainThread(i);
+        console.warn('Falling back to fast lightning texture generation:', error);
+        generateFastLightningTexture(i);
       };
 
       lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
     });
   }
 
-  for (let i = 0; i < numLightningTextures; i++)
-    await generateLightningTextureAsync(i);
+  await Promise.all(Array.from({length : numLightningTextures}, (_, i) => generateLightningTextureAsync(i)));
 
   await loadingBar.set(90, 'Setting up FBO`s');
 
