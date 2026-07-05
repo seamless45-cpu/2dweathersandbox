@@ -88,8 +88,8 @@ function generateLightningBoltImageData(width, height, createCanvas)
         if (line_width < 0.1)
           return;
 
-        if (numBranches < maxBranches && Math.random() < 0.075) { // secondary branch
-
+        if (numBranches < maxBranches && Math.random() < 0.0) { // secondary branch
+        // disabled because it doesn't make that realistic.
           numBranches++;
           drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, line_width);
         }
