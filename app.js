@@ -5461,8 +5461,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function generateFastLightningTexture(i)
   {
-    const width = 540;
-    const height = 1080;
+    const width = 720;
+    const height = 1440;
     const data = new Uint8ClampedArray(width * height * 4);
 
     function setPixel(x, y, brightness)
@@ -5496,7 +5496,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         }
 
         if (lineWidth > 0.6 && Math.random() < 0.008 * (1.0 - y / height))
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.45, Math.floor(maxLength * 0.96)); // branch length
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.42, Math.floor(maxLength * 0.96)); // branch length
       }
     }
 
