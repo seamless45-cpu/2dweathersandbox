@@ -5482,8 +5482,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       let x = startX;
       let y = startY;
       for (let step = 0; step < maxLength && y < height; step++) {
-        x += Math.sin(angle) * 1.6;
-        y += Math.cos(angle) * 1.6;
+        x += Math.sin(angle) * 1.8;
+        y += Math.cos(angle) * 1.8;
         angle += (Math.random() - 0.55) * 0.55;
         angle -= angle * 0.08;
 
@@ -5495,12 +5495,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
         }
 
-        if (lineWidth > 0.6 && Math.random() < 0.004 * (1.0 - y / height)) // branch
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.45, Math.floor(maxLength * 0.12)); // branch length
+        if (lineWidth > 0.6 && Math.random() < 0.008 * (1.0 - y / height))
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.45, Math.floor(maxLength * 0.96)); // branch length
       }
     }
 
-    drawBolt(width / 2, 0, Math.PI / 12, 2.5, height * 4.1);
+    drawBolt(width / 2, 0, Math.PI / 12, 2.5, height);
     generateLightningTexture(i, new ImageData(data, width, height));
   }
 
