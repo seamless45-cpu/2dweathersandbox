@@ -10,7 +10,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
     const colR = 12;
     const colG = 12;
     const colB = 12;
-    const brightness = Math.pow(lineWidth, 2.1);
+    const brightness = Math.pow(lineWidth, 2.0);
     return `rgb(${colR * brightness}, ${colG * brightness}, ${colB * brightness})`;
   }
 
@@ -89,7 +89,6 @@ function generateLightningBoltImageData(width, height, createCanvas)
           return;
 
         if (numBranches < maxBranches && Math.random() < 0.075) { // secondary branch
-        
           numBranches++;
           drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.0, line_width);
         }
