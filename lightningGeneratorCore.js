@@ -42,11 +42,11 @@ function generateLightningBoltImageData(width, height, createCanvas)
     startX = nextX;
     startY = nextY;
 
-    if (numBranches < maxBranches && Math.random() < 0.075 * (1.25 - nextY / height)) { // branch
+    if (numBranches < maxBranches && Math.random() < 0.122 * (1.25 - nextY / height)) { // branch
       ctx.strokeStyle = genLightningColor(lineWidth);
       ctx.stroke();
       numBranches++;
-      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, lineWidth * 0.5 * Math.random());
+      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.0, lineWidth * 0.5 * Math.random());
       ctx.beginPath();
       ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
       ctx.lineWidth = lineWidth;
