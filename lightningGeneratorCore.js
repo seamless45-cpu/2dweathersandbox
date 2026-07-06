@@ -18,10 +18,10 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
   let startX = width / 2.0;
   let startY = 0;
-  let angle = Math.PI / 6.;
+  let angle = Math.PI / 12.;
   let lineWidth = 9.0;
   const targetAngle = 0.0;
-  const maxBranches = 196;
+  const maxBranches = 1440;
   let numBranches = 0;
 
   ctx.moveTo(startX, startY);
@@ -33,16 +33,16 @@ function generateLightningBoltImageData(width, height, createCanvas)
     const nextX = startX + Math.sin(angle);
     const nextY = startY + Math.cos(angle);
 
-    angle += (Math.random() - 0.5) * 0.7;  // 0.7
+    angle += (Math.random() - 0.5) * 0.67;  // 0.7
 
-    angle -= (angle - targetAngle) * 0.07; // keep it going in a general direction
+    angle -= (angle - targetAngle) * 0.03; // keep it going in a general direction
 
     ctx.lineTo(nextX, nextY);
 
     startX = nextX;
     startY = nextY;
 
-    if (numBranches < maxBranches && Math.random() < 0.125 * (1. - nextY / height)) { // branch
+    if (numBranches < maxBranches && Math.random() < 0.075 * (1.25 - nextY / height)) { // branch
       ctx.strokeStyle = genLightningColor(lineWidth);
       ctx.stroke();
       numBranches++;
@@ -79,7 +79,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
       startX = nextX;
       startY = nextY;
 
-      if (Math.random() < 0.0002) { // reduce width
+      if (Math.random() < 0.0001) { // reduce width
 
         ctx.strokeStyle = genLightningColor(line_width);
         ctx.stroke();
@@ -88,8 +88,8 @@ function generateLightningBoltImageData(width, height, createCanvas)
         if (line_width < 0.1)
           return;
 
-        if (numBranches < maxBranches && Math.random() < 0.0) { // secondary branch
-        // disabled because it doesn't make that realistic.
+        if (numBranches < maxBranches && Math.random() < 0.075) { // secondary branch
+        
           numBranches++;
           drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, line_width);
         }
