@@ -10,7 +10,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
     const colR = 12;
     const colG = 12;
     const colB = 12;
-    const brightness = Math.pow(lineWidth, 2.0);
+    const brightness = Math.pow(lineWidth, 2.1);
     return `rgb(${colR * brightness}, ${colG * brightness}, ${colB * brightness})`;
   }
 
@@ -35,7 +35,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
     angle += (Math.random() - 0.5) * 0.67;  // 0.7
 
-    angle -= (angle - targetAngle) * 0.03; // keep it going in a general direction
+    angle -= (angle - targetAngle) * 0.035; // keep it going in a general direction
 
     ctx.lineTo(nextX, nextY);
 
