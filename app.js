@@ -5206,6 +5206,36 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const lightningTextureWidth = 512;
   const lightningTextureHeight = 1024;
 
+  const lightningDataValues = new Float32Array(4);
+  const latestLightningData = new Float32Array(4);
+
+  function lightningShakeHash(n)
+  {
+    const value = Math.sin(n) * 43758.5453123;
+    return value - Math.floor(value);
+  }
+
+  function calcLightningShakeOffset()
+  {
+    const lightningStartIterNum = latestLightningData[2];
+    const lightningIntensity = latestLightningData[3];
+    const lightningTime = (iterNum - lightningStartIterNum) / 5.0;
+    const strikeTime = lightningTime - 1.0;
+
+    if (lightningIntensity <= 1.0 || strikeTime < 0.0 || strikeTime > 0.65) {
+      return { x: 0.0, y: 0.0 };
+    }
+
+    const seed = latestLightningData[0] * 927.37 + latestLightningData[1] * 313.13 + lightningStartIterNum * 0.071;
+    const jitterStep = Math.floor(strikeTime * 85.0);
+    const jitterX = lightningShakeHash(seed + jitterStep * 17.17) * 2.0 - 1.0;
+    const jitterY = lightningShakeHash(seed + jitterStep * 29.29 + 11.0) * 2.0 - 1.0;
+    const decay = Math.pow(Math.max(1.0 - strikeTime / 0.65, 0.0), 2.5);
+    const amplitude = Math.min(0.0025, 0.00045 * lightningIntensity * lightningIntensity) * decay / Math.max(cam.curZoom, 0.001);
+
+    return { x: jitterX * amplitude, y: jitterY * amplitude };
+  }
+
 
   frameBuff_0 = gl.createFramebuffer(); // global for weather stations
   const frameBuff_1 = gl.createFramebuffer();
@@ -6157,15 +6187,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
               gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-              if (guiControls.sound) {
-                gl.readBuffer(gl.COLOR_ATTACHMENT0);
-                var lightningDataValues = new Float32Array(4);
-                gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
-                // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
+              gl.readBuffer(gl.COLOR_ATTACHMENT0);
+              gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
+              latestLightningData.set(lightningDataValues);
+              // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
-                if (Math.round(lightningDataValues[2]) == iterNum) {
-                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
-                }
+              if (guiControls.sound && Math.round(lightningDataValues[2]) == iterNum) {
+                soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
               }
             }
 
@@ -6365,8 +6393,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       // draw clouds and terrain
       gl.useProgram(realisticDisplayProgram);
+      const lightningShakeOffset = calcLightningShakeOffset();
       gl.uniform2f(gl.getUniformLocation(realisticDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-      gl.uniform3f(gl.getUniformLocation(realisticDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+      gl.uniform3f(gl.getUniformLocation(realisticDisplayProgram, 'view'), cam.curXpos + lightningShakeOffset.x, cam.curYpos + lightningShakeOffset.y, cam.curZoom);
       gl.uniform4f(gl.getUniformLocation(realisticDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'Xmult'), horizontalDisplayMult);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'iterNum'), iterNum);
