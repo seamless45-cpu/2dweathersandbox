@@ -1590,8 +1590,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     {
       this.tarZoom *= 1.0 + change;
 
-      let minZoom = 0.5;
-      let maxZoom = 35.0 * sim_aspect;
+      let minZoom = 0.1;
+      let maxZoom = 45.0 * sim_aspect;
 
       if (this.tarZoom > maxZoom) {
         this.tarZoom = maxZoom;
@@ -5230,8 +5230,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     const jitterStep = Math.floor(strikeTime * 85.0);
     const jitterX = lightningShakeHash(seed + jitterStep * 17.17) * 2.0 - 1.0;
     const jitterY = lightningShakeHash(seed + jitterStep * 29.29 + 11.0) * 2.0 - 1.0;
-    const decay = Math.pow(Math.max(1.0 - strikeTime / 0.65, 0.0), 2.5);
-    const amplitude = Math.min(0.0025, 0.00045 * lightningIntensity * lightningIntensity) * decay / Math.max(cam.curZoom, 0.001);
+    const decay = Math.pow(Math.max(1.0 - strikeTime / 0.45, 0.0), 2.5);
+    const amplitude = Math.min(0.0025, 0.00045 * lightningIntensity * lightningIntensity) * decay / Math.max(cam.curZoom, 0.01);
 
     return { x: jitterX * amplitude, y: jitterY * amplitude };
   }
