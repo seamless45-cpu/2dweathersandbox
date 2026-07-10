@@ -269,20 +269,7 @@
         <div class="nav-title">
             <h1>2D Weather Sandbox</h1>
         </div>
-        <div class="nav-icons">
-            <a href="https://github.com/niels747/2D-Weather-Sandbox" target="_blank" rel="noopener noreferrer">
-                <img src="resources/img/Github.png" alt="GitHub">
-            </a>
-            <a href="https://www.patreon.com/user?u=76043935" target="_blank" rel="noopener noreferrer">
-                <img src="resources/img/Patreon.png" alt="Patreon">
-            </a>
-            <a href="https://www.youtube.com/user/nielsdaemen/videos" target="_blank" rel="noopener noreferrer">
-                <img src="resources/img/Youtube.png" alt="YouTube">
-            </a>
-            <a href="https://discord.gg/c4Xdf92PzG" target="_blank" rel="noopener noreferrer">
-                <img src="resources/img/Discord.png" alt="Discord">
-            </a>
-        </div>
+        
     </nav>
 
     <div id="IntroScreen">
@@ -305,16 +292,16 @@
                         <option value="12" selected>12H</option>
                         <option value="18">18H</option>
                     </select>
-                    <p>Select a real world sounding to use as forcing in the simulation</p>
+                    <p>select a real world sounding to use as forcing in the simulation</p>
                 </div>
             </div>
             <img style="float: left; height: 500px;" id="soundingPreview"
-                alt="Sounding not available, Please select a different time.">
+                alt="sounding arent available. pls select a different one">
         </div>
 
         <form id="startBtn" oninput="updateSetupSliders();">
             <div class="resolution-warning">
-                <p>Choose a resolution - Higher resolutions provide more detail but significantly impact performance
+                <p>Choose the resolution - Higher resolutions provide more detail but significantly impact performance from GPU load
                 </p>
             </div>
 
@@ -337,7 +324,7 @@
                     </td>
                     <td><i id="simResYWarning" style="color:rgb(255, 61, 61); display: none;">Vertical resolutions
                             other
-                            than 300 are not optimized and may be buggy!</i></td>
+                            than 300 are not optimized.</i></td>
                 </tr>
                 <tr>
                     <td><b>Simulation height</b></td>
@@ -347,11 +334,11 @@
                     </td>
                     <td><i id="simHeightWarning" style="color:rgb(255, 61, 61); display: none;">Sim heights other
                             than
-                            12000 m are not optimized and may be buggy!</i></td>
+                            12000 m doesn't do anything much</i></td>
                 </tr>
             </table>
             <input type="button" value="Create New Simulation" onclick="loadData ()" />
-            <i>Move the mouse until you see a terrain you like, then just click to start.</i>
+            <i>move the mouse until you see a terrain you like, then just release the mouse or finger to start</i>
         </form>
 
 
@@ -360,48 +347,12 @@
             <input type="file" id="fileInput" name="fileInput" accept=".weathersandbox " onchange="loadData()" />
         </p>
 
-        <div class="example-files">
-            <h3>Example Save Files</h3>
-            <p><a style="color: white" href="./saves/Background image.weathersandbox">Background image</a></p>
-            <p><a style="color: white" href="./saves/Hotlake Valley.weathersandbox">Hotlake Valley</a></p>
-            <p><a style="color: white" href="./saves/Mountain uplift cell.weathersandbox">Mountain Uplift Cell at
-                    sunset</a></p>
-            <p><a style="color: white" href="./saves/480 km map with strong derecho.weathersandbox">480 km map with
-                    strong Derecho</a></p>
-            <p><a style="color: white" href="./saves/Three Nice Cells.weathersandbox">Three Nice Cells</a></p>
-            <p><a style="color: white" href="./saves/Mountain Snow Storm.weathersandbox">Mountain Snow Storm</a></p>
-            <p><a style="color: white" href="./saves/Powerful & Longlasting Cell.weathersandbox">Powerful &
-                    Longlasting
-                    Cell</a></p>
-            <p><a style="color: white" href="./saves/Rain Sucked Up.weathersandbox">Powerful updraft sucking up rain
-                    and
-                    turning it into hail.</a></p>
-            <p><a style="color: white" href="./saves/Powerful Hail and Snow Cells.weathersandbox">Powerful Hail and
-                    Snow
-                    Cells</a></p>
-            <p><a style="color: white" href="./saves/Very nice cell over coastal mountain.weathersandbox">Very nice
-                    cell
-                    over coastal mountain</a></p>
-            <p><a style="color: white" href="./saves/Awesome Convergence Cell.weathersandbox">Awesome Convergence
-                    Cell</a></p>
-            <p><a style="color: white" href="./saves/Two nice cells in lake valley.weathersandbox">Two nice cells in
-                    lake valley</a></p>
-            <p><a style="color: white" href="./saves/Insane CAPE.weathersandbox">Insane CAPE</a></p>
-            <p><a style="color: white" href="./saves/100 X 100 Test.weathersandbox">100 X 100 Test</a></p>
-        </div>
-
         <div id="help" class="tips">
-            <h2>Tips</h2>
+            <h2>useful tips</h2>
             <ul>
-                <li>Vertical resolution of 300 gives most realistic results</li>
-                <li>Larger horizontal resolutions allow stronger converging winds to develop, forming more
-                    realistic,
-                    longer lasting cells</li>
-                <li>Performance is mostly GPU dependent, GTX 1070 or better recommended for realtime gameplay</li>
-                <li>If you have a laptop with a dedicated GPU, make sure the browser is actually using it! It's
-                    often
-                    using the integrated graphics by default</li>
-                <li>Play in fullscreen mode (F11)</li>
+                <li>performance is mostly GPU, Adreno 610, Adreno 613, Adreno 619, Mali G57, Mali G68,Mali G610, Mali G615,Mali G720, Adreno 620, Adreno 710, Adreno 720, Adreno 722, Adreno 810 or better recommended for realtime gameplay. phones, smartwatches, smart tv, pc, laptop and more are supported. (needs a browser)</li>
+                <li></li>
+                <li>play in fullscreen mode (F11) for immersive experience</li>
             </ul>
         </div>
 
@@ -413,7 +364,6 @@
                 <li>Mouse wheel to zoom in and out, Or to change brush size while holding down B</li>
                 <li>Left mouse button to use selected tool. Hold down Ctrl (command on mac) to perform the inverted
                     action</li>
-                <li>Touchscreen input is pretty basic for now, will add more controls in the future</li>
             </ul>
             <h3>Keys</h3>
             <table style="width: 100%">
@@ -558,7 +508,7 @@
             <br />
             <br />
             <br />
-            <i>By presence</i>
+            <i>By Mali.G57</i>
         </div>
     </div>
 
