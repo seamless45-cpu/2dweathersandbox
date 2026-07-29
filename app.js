@@ -5707,6 +5707,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'lightTex'), 4);
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'precipFeedbackTex'), 5);
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'precipDepositionTex'), 6);
+  gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'lightningDataTex'), 7);
   gl.uniform2f(gl.getUniformLocation(boundaryProgram, 'resolution'), sim_res_x, sim_res_y);
   gl.uniform2f(gl.getUniformLocation(boundaryProgram, 'texelSize'), texelSizeX, texelSizeY);
   gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'vorticity'),
@@ -6068,6 +6069,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
             gl.activeTexture(gl.TEXTURE6);
             gl.bindTexture(gl.TEXTURE_2D, precipitationDepositionTexture);
+            gl.activeTexture(gl.TEXTURE7);
+            gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
 
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuff_0);

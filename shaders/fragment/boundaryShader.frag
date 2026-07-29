@@ -18,6 +18,7 @@ uniform isampler2D wallTex;
 uniform sampler2D lightTex;
 uniform sampler2D precipFeedbackTex;
 uniform sampler2D precipDepositionTex;
+uniform sampler2D lightningDataTex;
 
 uniform float dryLapse;
 uniform float evapHeat;
@@ -100,6 +101,34 @@ void main()
       base[TEMPERATURE] += light[NET_HEATING]; // IR heating/cooling effect
 
     base[TEMPERATURE] += precipFeedback[HEAT]; // rain cools air and riming heats air
+
+    vec4 lightningData = texture(lightningDataTex, vec2(0.5));
+    float lightningAge = iterNum - lightningData[START_ITERNUM];
+    if (lightningData[INTENSITY] > 0.0 && lightningAge >= 0.0 && lightningAge < 3.0) {
+      vec2 strikeToCell = texCoord - lightningData.xy;
+      strikeToCell.x -= floor(strikeToCell.x + 0.5); // match horizontal world wrap with signed shortest path
+      float strikeDistance = length(strikeToCell / texelSize);
+
+      // Average lightning is approximately 30000°C: the channel superheats and
+      // ionizes air, then the explosive expansion launches the thunder shockwave.
+      const float lightningMinTempC = 22000.0;
+      const float lightningAverageTempC = 30000.0;
+      const float lightningMaxTempC = 36000.0;
+      float lightningTempC = clamp(map_range(lightningData[INTENSITY], 0.9, 2.4,
+                                             lightningMinTempC, lightningMaxTempC),
+                                   lightningMinTempC, lightningMaxTempC);
+      lightningTempC = mix(lightningTempC, lightningAverageTempC, 0.25);
+      float lightningTempK = CtoK(lightningTempC);
+
+      float channelHeat = exp(-strikeDistance * strikeDistance * 0.45) * lightningData[INTENSITY];
+      base[TEMPERATURE] += channelHeat * (lightningTempK - realTemp) * 0.00042;
+
+      float shockRadius = lightningAge * 8.0 + 1.0;
+      float shockBand = exp(-pow(strikeDistance - shockRadius, 2.0) * 0.18) * lightningData[INTENSITY];
+      vec2 shockDir = normalize(strikeToCell / max(length(strikeToCell), 0.000001));
+      base[PRESSURE] += shockBand * 0.018;
+      base.xy += shockDir * shockBand * 0.028;
+    }
 
 
     float precipCoalescence = max(-precipFeedback[VAPOR], 0.); // how much cloud water turns into rain
