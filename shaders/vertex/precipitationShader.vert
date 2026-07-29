@@ -125,6 +125,20 @@ void main()
 
           float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
 
+          // Real lightning channels average approximately 30000°C. Denser storm cores
+          // superheat and ionize the air column more strongly, building the pressure
+          // impulse that becomes the thunder shockwave.
+          const float lightningAverageDensity = 4.8;
+          const float lightningMinTempC = 22000.0;
+          const float lightningAverageTempC = 30000.0;
+          const float lightningMaxTempC = 36000.0;
+          float lightningDensityTempMix = clamp(map_range(cloudPlusPrecipDensity, lightningCloudDensityThreshold,
+                                                         lightningAverageDensity * 1.75, 0.0, 1.0),
+                                                0.0, 1.0);
+          float lightningTempC = mix(lightningMinTempC, lightningMaxTempC, lightningDensityTempMix);
+          lightningTempC = mix(lightningTempC, lightningAverageTempC, 0.35); // keep typical storm density near 30000°C
+          float lightningTempK = CtoK(lightningTempC);
+
           float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
 
           const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
@@ -136,7 +150,12 @@ void main()
             gl_PointSize = 1.0;
             feedback.xy = texCoord;
             feedback[START_ITERNUM] = iterNum;
-            feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 9.5 + 0.18 + random2d(texCoord), 0.0, 3.2);
+            float lightningIntensity = clamp(cloudPlusPrecipDensity / 9.5 + 0.18 + random2d(texCoord), 0.0, 3.2);
+            // Temperature is converted to Kelvin for heat-feedback conventions. The
+            // feedback texture keeps xy/start/intensity unchanged; the fluid pass uses
+            // intensity and strike position to apply this channel heat locally.
+            lightningIntensity *= clamp(lightningTempK / CtoK(lightningAverageTempC), 0.85, 1.15);
+            feedback[INTENSITY] = clamp(lightningIntensity, 0.0, 3.2);
             gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
           }
         } else {
