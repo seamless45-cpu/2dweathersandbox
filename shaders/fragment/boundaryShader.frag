@@ -327,14 +327,14 @@ void main()
           int texFragX = int(fragCoord.x) % 80;
 
           if (wall[VERT_DISTANCE] == 5 && (texFragX == 18 || texFragX == 22)) { // cooling towers
-            water[TOTAL] += 2.5;
+            water[TOTAL] += 7.2;
             // base[TEMPERATURE] += 0.02;
             base.xy *= 0.5;
             base.y += 0.05;
           }
 
           else if (wall[VERT_DISTANCE] == 6 && texFragX == 29) { // smoke stack
-            water[SMOKE] += 0.72;
+            water[SMOKE] += 0.05;
             base[TEMPERATURE] += 0.24;
             base.xy *= 0.5;
           }
