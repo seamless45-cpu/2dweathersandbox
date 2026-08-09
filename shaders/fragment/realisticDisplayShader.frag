@@ -201,8 +201,8 @@ return col * (strength * 2.4 / float(SPECTRAL_SAMPLES));
 // ---------------------------------------------------------------------------
 
 // One parallax layer of rain streaks. 'amount' in [0,1] scales droplet density,
-// 'slant' tilts the streaks with the wind.
-float rainLayer(vec2 uv, float t, float layer, float amount, float slant)
+// 'slant' tilts the streaks with the wind, 'stretch' lengthens them in heavy rain.
+float rainLayer(vec2 uv, float t, float layer, float amount, float slant, float stretch)
 {
 if (amount <= 0.001)
 return 0.0;
@@ -216,9 +216,10 @@ p.y += colRnd * 64.0;
 vec2 id = floor(p);
 vec2 f = fract(p) - 0.5;
 float rnd = random2d(id + layer * 7.31);
-float densityGate = step(1.0 - amount, random2d(id + 41.7 + layer * 3.13));
-float thickness = 0.07 + 0.08 * rnd;
-float halfLen = 0.16 + 0.24 * rnd;
+// droplets fade in one by one as amount grows instead of popping in
+float densityGate = smoothstep(0.0, 0.14, rnd - (1.0 - amount));
+float thickness = 0.06 + 0.08 * rnd;
+float halfLen = min((0.14 + 0.22 * rnd) * stretch, 0.46); // heavier rain = longer streaks
 float streak = (1.0 - smoothstep(thickness * 0.25, thickness, abs(f.x))) *
                (1.0 - smoothstep(halfLen * 0.15, halfLen, abs(f.y)));
 return streak * densityGate * (0.45 + 0.55 * rnd);
@@ -235,7 +236,8 @@ vec2 p = vec2(uv.x + uv.y * slant * 0.55, uv.y + t * speed) * scale;
 vec2 id = floor(p);
 vec2 f = fract(p) - 0.5;
 float rnd = random2d(id + layer * 11.31);
-float densityGate = step(1.0 - amount, random2d(id + 57.17 + layer * 5.93));
+// flakes fade in one by one as amount grows instead of popping in
+float densityGate = smoothstep(0.0, 0.14, rnd - (1.0 - amount));
 vec2 offs = (vec2(rnd, random2d(id + 9.71 + layer * 2.3)) - 0.5) * 0.6;
 offs.x += sin(t * mix(0.05, 0.13, rnd) + rnd * 6.2831) * 0.13; // gentle side sway
 float radius = 0.055 + 0.095 * rnd;
@@ -245,32 +247,44 @@ return flake * densityGate * (0.35 + 0.65 * rnd);
 
 // Adds animated rain/snow droplets to emittedLight for this air column.
 // precip = water[PRECIPITATION], tempC in Celsius, light scales visibility
-// (droplets are nearly invisible at night, but flash with lightning).
+// (droplets are nearly invisible at night, but flash with lightning/fire).
 void applyPrecipitationDroplets(vec2 fragCoordIn, float precip, float windX, float tempC, float light)
 {
-float amount = clamp(precip * 5.0, 0.0, 1.0);
+// smooth onset/offset: droplets fade in as precipitation builds up
+float amount = smoothstep(0.015, 0.30, precip);
 if (amount <= 0.001)
 return;
-vec2 uv = fragCoordIn / resolution.y;                  // world space, aspect correct
-float rainMix = map_rangeC(tempC, 0.5, 3.0, 0.0, 1.0); // 1 = rain, 0 = snow
-float slant = clamp(windX * 1.4, -1.0, 1.0);
+vec2 uv = fragCoordIn / resolution.y; // world space, aspect correct
+// wide sleet band: snow melts into rain over several degrees
+float rainMix = smoothstep(-1.0, 4.0, tempC);
+float slant = clamp(windX * 1.4, -1.2, 1.2);
+
+// parallax layers fade in one after another as precipitation gets heavier
+float w0 = smoothstep(0.00, 0.20, amount);
+float w1 = smoothstep(0.15, 0.50, amount);
+float w2 = smoothstep(0.45, 0.90, amount);
+// heavier rain also stretches the streaks (motion blur)
+float stretch = mix(0.8, 1.4, amount);
 
 float rainAmt = amount * rainMix;
 float rain = 0.0;
-rain += rainLayer(uv, iterNum, 0.00, rainAmt, slant) * 0.90;
-rain += rainLayer(uv, iterNum, 0.50, rainAmt, slant) * 0.60;
-rain += rainLayer(uv, iterNum, 1.00, rainAmt, slant) * 0.35;
+rain += rainLayer(uv, iterNum, 0.00, rainAmt, slant, stretch) * (0.90 * w0);
+rain += rainLayer(uv, iterNum, 0.50, rainAmt, slant, stretch) * (0.60 * w1);
+rain += rainLayer(uv, iterNum, 1.00, rainAmt, slant, stretch) * (0.35 * w2);
 
 float snowAmt = amount * (1.0 - rainMix);
 float snow = 0.0;
-snow += snowLayer(uv, iterNum, 0.00, snowAmt, slant) * 0.90;
-snow += snowLayer(uv, iterNum, 0.50, snowAmt, slant) * 0.60;
-snow += snowLayer(uv, iterNum, 1.00, snowAmt, slant) * 0.40;
+snow += snowLayer(uv, iterNum, 0.00, snowAmt, slant) * (0.90 * w0);
+snow += snowLayer(uv, iterNum, 0.50, snowAmt, slant) * (0.60 * w1);
+snow += snowLayer(uv, iterNum, 1.00, snowAmt, slant) * (0.40 * w2);
+
+// droplets thin out near the cloud base at the top of the domain
+float topFade = 1.0 - smoothstep(0.88, 1.0, fragCoordIn.y / resolution.y);
 
 const vec3 rainCol = vec3(0.62, 0.72, 0.95); // cold bluish highlights
 const vec3 snowCol = vec3(1.00, 1.00, 1.00);
 float dropletLight = clamp(light * 1.15 + 0.03, 0.03, 1.0);
-emittedLight += (rain * rainCol + snow * snowCol * 0.85) * dropletLight * 0.8;
+emittedLight += (rain * rainCol + snow * snowCol * 0.85) * dropletLight * 0.8 * topFade;
 }
 
 float rand(float n) { return fract(sin(n) * 43758.5453123); }
@@ -295,15 +309,59 @@ float totalDensity = cloudDensity + water[PRECIPITATION] * 0.30; // soft rain-sh
 // float cloudOpacity = clamp(cloudwater * 4.0, 0.0, 1.0);
 float cloudOpacity = clamp(1.0 - (1.0 / (1. + totalDensity)), 0.0, 1.0);
 
-const vec3 smokeThinCol = vec3(0.8, 0.51, 0.26);
-const vec3 smokeThickCol = vec3(0., 0., 0.);
+// ------------------------------ smoke -----------------------------------
+// thin smoke is a light bluish gray, thick smoke goes nearly black;
+// slow turbulence keeps the smoke body subtly churning
+const vec3 smokeThinCol = vec3(0.60, 0.62, 0.66);
+const vec3 smokeThickCol = vec3(0.06, 0.06, 0.07);
 float smokeOpacity = clamp(1. - (1. / (water[SMOKE] + 1.)), 0.0, 1.0);
-float fireIntensity = clamp((smokeOpacity - 0.8) * 25., 0.0, 1.0);
-vec3 fireCol = hsv2rgb(vec3(fireIntensity * 0.008, 0.98, 5.0)) * 1.0; // 1.0, 0.7, 0.0
-vec3 smokeOrFireCol = mix(mix(smokeThinCol, smokeThickCol, smokeOpacity), fireCol, fireIntensity);
-shadowLight += fireIntensity * 2.5;                                                                                 // 1.5
-float opacity = 1. - (1. - smokeOpacity) * (1. - cloudOpacity);                                                     // alpha blending
-vec3 color = (smokeOrFireCol * smokeOpacity / opacity) + (cloudCol * cloudOpacity * (1. - smokeOpacity) / opacity); // color blending
+float smokeTurb = texture(noiseTex, fragCoordIn * 0.05 + vec2(iterNum * 0.0015, -iterNum * 0.004)).r;
+vec3 smokeCol = mix(smokeThinCol, smokeThickCol, smoothstep(0.1, 0.9, smokeOpacity + (smokeTurb - 0.5) * 0.25));
+
+// ------------------------------- fire -----------------------------------
+// fire lives in the densest smoke; ramp in smoothly instead of a hard band
+float fireAmount = smoothstep(0.55, 0.95, smokeOpacity);
+// fire state in the cell below: keeps flames continuous across cell
+// boundaries (no hard flame-root seam when fire stacks vertically)
+vec4 waterBelow = bilerpWallVis(waterTex, wallTex, vec2(fragCoordIn.x, max(fragCoordIn.y - 1.0, 0.0)));
+float fireBelow = smoothstep(0.55, 0.95, clamp(1. - (1. / (waterBelow[SMOKE] + 1.)), 0.0, 1.0));
+// rising turbulent flame field in continuous coordinates (no per-cell reset)
+vec2 flameUV = vec2(fragCoordIn.x * 0.55, fragCoordIn.y * 0.35 - iterNum * 0.035);
+float flameNoise = texture(noiseTex, flameUV * 0.11).r * 0.6 +
+                   texture(noiseTex, flameUV * 0.23 + vec2(1.7, iterNum * 0.013)).r * 0.4;
+float localY = fract(fragCoordIn.y);
+float flameHeight = 0.25 + 0.75 * fireAmount;
+float baseMask = 1.0 - smoothstep(flameHeight * 0.25, flameHeight, localY + (flameNoise - 0.5) * 0.7);
+float contMask = 0.35 + 0.65 * smoothstep(0.2, 0.9, flameNoise); // root-less pattern
+float flameMask = mix(baseMask, max(baseMask, contMask), smoothstep(0.2, 0.7, fireBelow));
+// flicker: low spatial frequency (~40 px period) so it never alternates per pixel
+float flicker = 0.72 + 0.28 * sin(iterNum * 0.9 + fragCoordIn.x * 0.15) *
+                              sin(iterNum * 0.53 + fragCoordIn.x * 0.11 + fragCoordIn.y * 0.07);
+flicker = clamp(flicker, 0.35, 1.0);
+float heat = fireAmount * flameMask;
+// blackbody-like ramp driven by heat only; flicker scales brightness, not hue
+vec3 fireCol = vec3(smoothstep(0.00, 0.35, heat),
+                    smoothstep(0.25, 0.80, heat),
+                    smoothstep(0.70, 1.00, heat));
+fireCol *= vec3(1.00, 0.86, 0.55) * 1.8;
+// rising embers spread through the whole fire column (no per-cell cutoff)
+vec2 emberUV = vec2(fragCoordIn.x * 3.1, fragCoordIn.y * 1.4 - iterNum * 0.05);
+vec2 emberId = floor(emberUV);
+vec2 emberF = fract(emberUV) - 0.5;
+float emberRnd = random2d(emberId);
+emberF.x += sin(iterNum * 0.1 + emberRnd * 6.2831) * 0.2; // sway while rising
+float ember = (1.0 - smoothstep(0.03, 0.09, length(emberF))) * step(0.72, emberRnd) * heat * flicker;
+
+shadowLight += fireAmount * flicker * 2.8; // flickering illumination on surroundings
+
+// warm glow inside the fire column
+vec3 smokeOrFireCol = mix(smokeCol, fireCol * 0.6, smoothstep(0.1, 0.8, heat));
+smokeOrFireCol += vec3(1.0, 0.45, 0.15) * heat * 0.4;
+
+float opacity = 1. - (1. - smokeOpacity) * (1. - cloudOpacity); // alpha blending
+vec3 color = vec3(0.0);
+if (opacity > 0.0001)
+color = (smokeOrFireCol * smokeOpacity / opacity) + (cloudCol * cloudOpacity * (1. - smokeOpacity) / opacity); // color blending
 
 vec4 lightningData = texture(lightningDataTex, vec2(0.5));
 vec2 lightningPos = lightningData.xy;
@@ -320,6 +378,10 @@ dist.x *= aspectRatios[0];
 float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.03);
 lightningOnLight *= currentLightningIntensity;
 onLight += vec3(lightningOnLight);
+
+// fire self-emission added AFTER the lightning attenuation so strikes
+// don't visibly dim the fire; embers glow orange
+emittedLight += fireCol * flicker * 1.6 + vec3(1.0, 0.45, 0.12) * ember * 1.6;
 
 // animated rain streaks / snow flakes falling through this air column,
 // lit by the sun, fire glow and lightning
@@ -449,6 +511,7 @@ float rainSnowFactor = map_rangeC(KtoC(realTemp), 0.0, 5.0, 0.0, 1.0);          
 float sunElevDeg = 90.0 - abs(sunAngle) * rad2deg;
 float bowGeoFactor = 1.0 - smoothstep(30.0, 42.0, sunElevDeg);                  // bow sinks below the horizon as the sun rises
 float bowStrength = min(pow(lightIntensity, 2.0) * 1.9, 1.0) * min(water[PRECIPITATION] * 3.0, 1.0) * rainSnowFactor * bowGeoFactor;
+bowStrength *= 1.0 - min(cloudwater * 1.5, 0.5);                                // dense cloud washes the bow out
 vec3 rainbowCol = vec3(0.0);
 if (bowStrength > 0.001) {
 vec3 primary = rainbowSpectrum(viewAngle, 40.0, 42.4, 0.55, 1.00);
