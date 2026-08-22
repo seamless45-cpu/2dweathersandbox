@@ -70,81 +70,80 @@ void main()
   newDensity = density;   // determines fall speed
 
   if (mass[WATER] < 0.) { // inactive
-                          /*
-                          We have to generate a random position before we know if the droplet is actually gonna spawn, seems ineffcient but there is no way arround it.
-                          This is because spawn chance depends on the conditions at the spawn position, we have to sample the textures for every inactive droplet. this is a huge performance bottleneck
-                       */
+    /*
+      Sampling the fluid for every inactive droplet is the main precipitation bottleneck.
+      Only a budgeted subset attempts to spawn each iteration; spawnChance is scaled so the
+      expected spawn rate stays the same.
+    */
+#define initalMass 0.15 // 0.05 initial droplet mass
+    const float SPAWN_ATTEMPT_BUDGET = 3072.0;
+    float inactiveCount = max(inactiveDroplets, 10.0);
+    float attemptFraction = min(SPAWN_ATTEMPT_BUDGET / inactiveCount, 1.0);
 
-                          // generate random spawn position: x and y from 0. to 1.
-    // texCoord = vec2(random(mass[WATER] + iterNum), random(mass[ICE] + iterNum)); func2D
-    // texCoord = vec2(func2D(vec2(mass[WATER], dropPosition.x), iterNum * 0.3754), func2D(vec2(mass[ICE], dropPosition.x), iterNum * 0.073162));
+    float attemptGate = random2d(vec2(mass[WATER] * 13.17 + dropPosition.x, iterNum * 0.61803398875 + mass[ICE]));
 
-    texCoord = vec2(random2d(vec2(mass[WATER], dropPosition.x + iterNum * 0.3754)), random2d(vec2(mass[ICE], dropPosition.x + iterNum * 0.073162)));
+    if (attemptGate <= attemptFraction) {
+      // generate random spawn position: x and y from 0. to 1.
+      texCoord = vec2(random2d(vec2(mass[WATER], dropPosition.x + iterNum * 0.3754)), random2d(vec2(mass[ICE], dropPosition.x + iterNum * 0.073162)));
 
+      // Sample cloud water first; skip the temperature texture in empty air.
+      water = texture(waterTex, texCoord);
 
-    // sample fluid at generated position
-    base = texture(baseTex, texCoord);
-    water = texture(waterTex, texCoord);
+      if (water[CLOUD] > subZeroThreshold) {
+        base = texture(baseTex, texCoord);
+        realTemp = potentialToRealT(base[TEMPERATURE]); // in Kelvin
 
-    // check if position is okay to spawn
-    realTemp = potentialToRealT(base[TEMPERATURE]); // in Kelvin
+        float threshold;                  // minimal cloudwater before precipitation develops
+        if (realTemp > CtoK(0.0))
+          threshold = aboveZeroThreshold; // coalescence only happens in really dense warm clouds
+        else
+          threshold = subZeroThreshold;
 
-#define initalMass 0.15                             // 0.05 initial droplet mass
-    float threshold;                                // minimal cloudwater before precipitation develops
-    if (realTemp > CtoK(0.0))
-      threshold = aboveZeroThreshold;               // in above freezing conditions coalescence only happens in really dense clouds
-    else                                            // the colder it gets, the faster ice starts to form
-      //  treshHold = max(map_range(realTemp, CtoK(0.0), CtoK(-30.0), subZeroThreshold, initalMass), initalMass);
-      threshold = subZeroThreshold;
+        if (water[CLOUD] > threshold && base[TEMPERATURE] < 500.) { // if cloudwater above threshold and not wall
+          float spawnChance = ((water[CLOUD] - threshold) / inactiveCount) * resolution.x * resolution.y * spawnChanceMult;
+          spawnChance /= attemptFraction; // keep expected spawn rate with the attempt budget
 
-    if (water[CLOUD] > threshold && base[TEMPERATURE] < 500.) { // if cloudwater above threshold and not wall
-                                                                // float spawnChance = (water[1] - threshold) * 1000.0 / inactiveDroplets;
-                                                                // if (spawnChance > rand2d(mass.xy)) {
-                                                                //  float spawnChance = (water[CLOUD] - threshold) / inactiveDroplets * resolution.x * resolution.y * spawnChanceMult;
+          float nrmRand = random2d(vec2(mass[WATER] * 0.2324, iterNum * 0.1783 + mass[ICE]));
 
-      float spawnChance = ((water[CLOUD] - threshold) / (inactiveDroplets + 10.0)) * resolution.x * resolution.y * spawnChanceMult; // 20.0  50.0
+          if (spawnChance > nrmRand) {                                       // spawn precipitation particle
+            spawned = true;
+            newPos = vec2((texCoord.x - 0.5) * 2., (texCoord.y - 0.5) * 2.); // convert texture coordinate (0 to 1) to position (-1 to 1)
 
-      //    float nrmRand = random2d(vec2(mass[WATER] * 0.2324, iterNum * 0.1783 + random(mass[ICE]))); // normalized random value
+            if (realTemp < CtoK(0.0)) { // below 0 C
+              newMass[WATER] = 0.0;     // enable
+              newMass[ICE] = initalMass; // snow
+              feedback[HEAT] += newMass[ICE] * meltingHeat; // add heat of freezing
+              newDensity = snowDensity;
 
-      float nrmRand = fract(pow(water[CLOUD] * 10.0, 2.0));
+              vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
 
-      if (spawnChance > nrmRand) {                                       // spawn precipitation particle
-        spawned = true;
-        newPos = vec2((texCoord.x - 0.5) * 2., (texCoord.y - 0.5) * 2.); // convert texture coordinate (0 to 1) to position (-1 to 1)
+              const float lightningCloudDensityThreshold = 1.2; // lower threshold makes storm clouds eligible sooner
+              const float lightningChanceMultiplier = 0.125;    // higher multiplier makes eligible clouds strike more often
 
-        if (realTemp < CtoK(0.0)) {                                      // below 0 C
-          newMass[WATER] = 0.0;                                          // enable
-          newMass[ICE] = initalMass;                                     // snow
-          feedback[HEAT] += newMass[ICE] * meltingHeat;                  // add heat of freezing
-          newDensity = snowDensity;
+              float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
 
-          vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
+              float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
 
-          const float lightningCloudDensityThreshold = 1.2;          // lower threshold makes storm clouds eligible sooner
-          const float lightningChanceMultiplier = 0.125;              // higher multiplier makes eligible clouds strike more often
+              const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
 
-          float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
-
-          float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
-
-          const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
-
-          if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
-              random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
-            lightningSpawned = true;
-            isActive = false;
-            gl_PointSize = 1.0;
-            feedback.xy = texCoord;
-            feedback[START_ITERNUM] = iterNum;
-            feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
-            gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
+              if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
+                  random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
+                lightningSpawned = true;
+                isActive = false;
+                gl_PointSize = 1.0;
+                feedback.xy = texCoord;
+                feedback[START_ITERNUM] = iterNum;
+                feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
+                gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
+              }
+            } else {
+              newMass[WATER] = initalMass; // rain
+              newMass[ICE] = 0.0;
+              newDensity = 1.0;
+            }
+            feedback[VAPOR] -= initalMass;
           }
-        } else {
-          newMass[WATER] = initalMass; // rain
-          newMass[ICE] = 0.0;
-          newDensity = 1.0;
         }
-        feedback[VAPOR] -= initalMass;
       }
     }
 
