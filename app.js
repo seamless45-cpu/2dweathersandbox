@@ -374,6 +374,7 @@ const guiControls_default = {
   displayMode : 'DISP_REAL',
   wrapHorizontally : true,
   SmoothCam : true,
+  cameraShake : true,
   camSpeed : 0.01,
   exposure : 1.0,
   timeOfDay : 9.9,
@@ -1377,49 +1378,45 @@ function loadImage(url)
 
 class LoadingBar
 {
-  #loadingBar;
-  #bar;
-  #underBar;
-  #percent;
-  #description;
+  #overlay;
+  #fill;
+  #percentText;
+  #statusText;
+  #stepText;
+  percent;
+  description;
 
   constructor(percentIn)
   {
-    if (percentIn == null)
-      this.percent = 0;
-    else
-      this.percent = percentIn;
+    this.percent = percentIn == null ? 0 : percentIn;
+    this.description = 'INITIALIZING';
 
-    // create html
-    this.loadingBar = document.createElement('div');
-    this.bar = document.createElement('div');
-    this.loadingBar.appendChild(this.bar);
+    // reworked loading screen: themed boot-sequence overlay (styled in index.html)
+    this.#overlay = document.createElement('div');
+    this.#overlay.className = 'ls-overlay';
+    this.#overlay.innerHTML = `
+        <div class="ls-box">
+            <div class="ls-head">
+                <div class="ls-glyph"></div>
+                <div class="ls-titles">
+                    <div class="ls-title">2D WEATHER SANDBOX</div>
+                    <div class="ls-sub">ATMOS-KERNEL // BOOT SEQUENCE</div>
+                </div>
+                <div class="ls-led"></div>
+            </div>
+            <div class="ls-status">INITIALIZING</div>
+            <div class="ls-track"><div class="ls-fill"></div></div>
+            <div class="ls-meta"><span class="ls-percent">0%</span><span class="ls-step">SYS 00</span></div>
+        </div>`;
 
-    this.underBar = document.createElement('div');
-    this.loadingBar.appendChild(this.underBar);
-
-    this.loadingBar.style.width = '100%';
-    this.loadingBar.style.height = '100px';
-    this.loadingBar.style.color = 'white';
-    this.loadingBar.style.textAlign = 'center';
-    this.loadingBar.style.lineHeight = '50px';
-    this.loadingBar.style.backgroundColor = 'gray';
-    this.loadingBar.style.marginTop = '400px';
-    this.loadingBar.style.position = 'absolute';
-    this.loadingBar.style.zIndex = '2';
-
-    this.underBar.style.width = '100%';
-    this.underBar.style.height = '50px';
-    this.underBar.style.backgroundColor = 'black';
-
-    this.bar.style.height = '50px';
-
-    this.bar.style.backgroundColor = 'green';
-    this.bar.style.fontSize = '20px';
+    this.#fill = this.#overlay.querySelector('.ls-fill');
+    this.#percentText = this.#overlay.querySelector('.ls-percent');
+    this.#statusText = this.#overlay.querySelector('.ls-status');
+    this.#stepText = this.#overlay.querySelector('.ls-step');
 
     this.#update();
 
-    document.body.appendChild(this.loadingBar);
+    document.body.appendChild(this.#overlay);
   }
 
   async add(num, text)
@@ -1438,7 +1435,7 @@ class LoadingBar
 
   async showError(error)
   {
-    this.bar.style.backgroundColor = 'red';
+    this.#overlay.classList.add('ls-error');
     this.description = error;
     await this.#update();
   }
@@ -1446,19 +1443,24 @@ class LoadingBar
   #update()
   {
     return new Promise((resolve) => {
-      this.bar.style.width = this.percent + '%';
-      this.bar.innerHTML = this.percent + ' %';
-      this.underBar.innerHTML = this.description;
-      let timeout;
-      if (this.percent == 100)
-        timeout = 5;
-      else
-        timeout = 5; // 50 for nicer feel
-      setTimeout(() => { resolve(); }, timeout);
+      const pct = Math.min(100, Math.max(0, Math.round(this.percent)));
+      this.#fill.style.width = pct + '%';
+      this.#percentText.textContent = pct + '%';
+      this.#statusText.textContent = this.description;
+      this.#stepText.textContent = 'SYS ' + String(pct).padStart(2, '0');
+      setTimeout(() => { resolve(); }, 5);
     });
   }
 
-  remove() { this.loadingBar.parentNode.removeChild(this.loadingBar); }
+  remove()
+  {
+    const overlay = this.#overlay;
+    overlay.classList.add('ls-done'); // fade out (CSS transition)
+    setTimeout(() => {
+      if (overlay.parentNode)
+        overlay.parentNode.removeChild(overlay);
+    }, 500);
+  }
 }
 
 
@@ -1516,6 +1518,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     #Xvel;
     #Yvel;
     #Zvel;
+
+    // ── reworked camera shake: high frequency random offset shaking ──
+    #shakeStart = -1e12;   // ms timestamp when the shake was triggered
+    #shakeDuration = 1000; // ms (default: 1 second)
+    #shakeIntensity = 0;   // peak offset in screen pixels
+    shakeOffsetX = 0;      // view offset (world units) applied during rendering this frame
+    shakeOffsetY = 0;
 
     constructor()
     {
@@ -1623,6 +1632,74 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         this.changeViewYpos(mousePositionZoomCorrectionY);
       }
     }
+
+    // ── reworked camera shake ──
+    // intensityPx: peak random offset in screen pixels. duration: 1 second by default.
+    startShake(intensityPx, durationMs = 1000)
+    {
+      if (intensityPx < 0.5)
+        return;
+      const now = performance.now();
+      // never let a weaker strike cut short a stronger ongoing shake
+      this.#shakeIntensity = Math.max(intensityPx, this.#shakeAmplitudePx(now));
+      this.#shakeStart = now;
+      this.#shakeDuration = durationMs;
+    }
+
+    // shake intensity falls off with how close the lightning strike was
+    shakeFromLightning(strikeX, strikeIntensity)
+    {
+      let camXnorm = 1. - (this.curXpos + 1.0) / 2.0;
+
+      let camDistFromSim = cellHeight * sim_res_x * 0.5 / this.curZoom; // asuming 90° HFOV
+
+      let camHorDistFromStrike = (strikeX - camXnorm) * cellHeight * sim_res_x;
+
+      let distance = Math.hypot(camDistFromSim, camHorDistFromStrike);
+
+      const maxShakeDistance = 20000; // meters; further away nothing is felt
+      let proximity = clamp(1.0 - distance / maxShakeDistance, 0.0, 1.0);
+
+      let intensityPx = 24.0 * proximity * proximity * clamp(strikeIntensity, 0.5, 2.5);
+
+      this.startShake(intensityPx, 1000); // duration: 1 second
+    }
+
+    #shakeAmplitudePx(now)
+    {
+      const elapsed = now - this.#shakeStart;
+      if (elapsed >= this.#shakeDuration)
+        return 0;
+      return this.#shakeIntensity * (1.0 - elapsed / this.#shakeDuration); // linear decay
+    }
+
+    // pick a fresh random offset every frame -> high frequency shaking
+    updateShake()
+    {
+      const ampPx = this.#shakeAmplitudePx(performance.now());
+      if (ampPx <= 0) {
+        this.shakeOffsetX = 0;
+        this.shakeOffsetY = 0;
+        return;
+      }
+      const px = (Math.random() * 2.0 - 1.0) * ampPx;
+      const py = (Math.random() * 2.0 - 1.0) * ampPx;
+      // convert screen pixels to view (world) units
+      this.shakeOffsetX = (px * 2.0) / (canvas.width * this.curZoom);
+      this.shakeOffsetY = (py * 2.0) / (canvas.height * this.curZoom * canvas_aspect);
+    }
+
+    stopShake()
+    {
+      this.#shakeStart = -1e12;
+      this.#shakeIntensity = 0;
+      this.shakeOffsetX = 0;
+      this.shakeOffsetY = 0;
+    }
+
+    // camera position including the shake offset, for the rendering 'view' uniforms
+    get viewX() { return this.curXpos + this.shakeOffsetX; }
+    get viewY() { return this.curYpos + this.shakeOffsetY; }
   }
 
   cam = new Camera();
@@ -3814,6 +3891,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     display_folder.add(guiControls, 'SmoothCam').onChange(function() { cam.smooth = guiControls.SmoothCam; }).name('Smooth Camera');
 
+    display_folder.add(guiControls, 'cameraShake').name('Camera Shake');
+
     display_folder.add(guiControls, 'showGraph').onChange(hideOrShowGraph).name('Show Sounding Graph').listen();
     display_folder.add(guiControls, 'showDrops').name('Show Droplets').listen();
     display_folder.add(guiControls, 'realDewPoint').name('Show Real Dew Point');
@@ -5928,6 +6007,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
 
     cam.move();
+    cam.updateShake();
 
     prevMouseXinSim = mouseXinSim;
     prevMouseYinSim = mouseYinSim;
@@ -6207,14 +6287,17 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
               gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-              if (guiControls.sound) {
+              if (guiControls.sound || guiControls.cameraShake) {
                 gl.readBuffer(gl.COLOR_ATTACHMENT0);
                 var lightningDataValues = new Float32Array(4);
                 gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
                 // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
                 if (Math.round(lightningDataValues[2]) == iterNum) {
-                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
+                  if (guiControls.sound)
+                    soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
+                  if (guiControls.cameraShake)
+                    cam.shakeFromLightning(lightningDataValues[0], Math.pow(lightningDataValues[3], 2.0));
                 }
               }
             }
@@ -6401,7 +6484,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       gl.useProgram(skyBackgroundDisplayProgram);
       gl.uniform2f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-      gl.uniform3f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+      gl.uniform3f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
       gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'Xmult'), horizontalDisplayMult);
       gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'iterNum'), iterNum);
 
@@ -6416,7 +6499,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       // draw clouds and terrain
       gl.useProgram(realisticDisplayProgram);
       gl.uniform2f(gl.getUniformLocation(realisticDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-      gl.uniform3f(gl.getUniformLocation(realisticDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+      gl.uniform3f(gl.getUniformLocation(realisticDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
       gl.uniform4f(gl.getUniformLocation(realisticDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'Xmult'), horizontalDisplayMult);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'iterNum'), iterNum);
@@ -6540,7 +6623,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         // draw drops over clouds as instanced quads (works on mobile; gl_PointSize does not)
         gl.useProgram(precipDisplayProgram);
         gl.uniform2f(uniformLocation_precipDisplay_aspectRatios, sim_aspect, canvas_aspect);
-        gl.uniform3f(uniformLocation_precipDisplay_view, cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(uniformLocation_precipDisplay_view, cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform2f(uniformLocation_precipDisplay_canvasSize, canvas.width, canvas.height);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, baseTexture_1);
@@ -6570,7 +6653,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       if (guiControls.displayMode == 'DISP_TEMPERATURE') {
         gl.useProgram(temperatureDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(temperatureDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(temperatureDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(temperatureDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(temperatureDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1f(gl.getUniformLocation(temperatureDisplayProgram, 'Xmult'), horizontalDisplayMult);
 
@@ -6586,21 +6669,21 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       } else if (guiControls.displayMode == 'DISP_AIRQUALITY') {
         gl.useProgram(airQualityDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(airQualityDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(airQualityDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(airQualityDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(airQualityDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1f(gl.getUniformLocation(airQualityDisplayProgram, 'Xmult'), horizontalDisplayMult);
 
       } else if (guiControls.displayMode == 'DISP_HUMD') {
         gl.useProgram(humidityDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(humidityDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(humidityDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(humidityDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(humidityDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1f(gl.getUniformLocation(humidityDisplayProgram, 'Xmult'), horizontalDisplayMult);
 
       } else if (guiControls.displayMode == 'DISP_IRDOWNTEMP') {
         gl.useProgram(IRtempDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(IRtempDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(IRtempDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(IRtempDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(IRtempDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1i(gl.getUniformLocation(IRtempDisplayProgram, 'upOrDown'), 0);
         gl.uniform1f(gl.getUniformLocation(IRtempDisplayProgram, 'Xmult'), horizontalDisplayMult);
@@ -6610,7 +6693,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       } else if (guiControls.displayMode == 'DISP_IRUPTEMP') {
         gl.useProgram(IRtempDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(IRtempDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(IRtempDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(IRtempDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(IRtempDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1i(gl.getUniformLocation(IRtempDisplayProgram, 'upOrDown'), 1);
         gl.uniform1f(gl.getUniformLocation(IRtempDisplayProgram, 'Xmult'), horizontalDisplayMult);
@@ -6620,7 +6703,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       } else {
         gl.useProgram(universalDisplayProgram);
         gl.uniform2f(gl.getUniformLocation(universalDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(universalDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform3f(gl.getUniformLocation(universalDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
         gl.uniform4f(gl.getUniformLocation(universalDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
         gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'Xmult'), horizontalDisplayMult);
 

@@ -216,8 +216,48 @@
         .bg-arc{stroke:#1b3a4d;stroke-width:24;fill:none;stroke-linecap:round}
         .fill-arc{stroke:var(--green);stroke-width:24;fill:none;stroke-linecap:round;transition:stroke .4s linear;filter:drop-shadow(0 0 6px rgba(93,245,164,.6))}
         .value{font-size:56px;font-weight:700;fill:#eaf7ff;text-anchor:middle;font-family:var(--mono)}
-        .dg.main{font-family:var(--mono) !important}
-        .dg.main .close-button{background:#0a1b26 !important}
+        /* ===== LOADING SCREEN (reworked) ===== */
+        .ls-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;
+            background:
+                radial-gradient(1000px 560px at 50% 28%, rgba(24,74,108,.28), transparent 65%),
+                repeating-linear-gradient(0deg, rgba(79,227,255,.02) 0 1px, transparent 1px 42px),
+                repeating-linear-gradient(90deg, rgba(79,227,255,.02) 0 1px, transparent 1px 42px),
+                #030a10;
+            opacity:1;transition:opacity .45s ease}
+        .ls-overlay.ls-done{opacity:0;pointer-events:none}
+        .ls-box{width:min(560px,88vw);position:relative;padding:26px 30px 24px;
+            background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
+            clip-path:polygon(0 14px,14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%);
+            box-shadow:0 0 60px rgba(79,227,255,.08), inset 0 0 40px rgba(0,0,0,.4);
+            animation:fadeIn .5s ease-in-out}
+        .ls-head{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+        .ls-titles{min-width:0}
+        .ls-glyph{width:34px;height:34px;position:relative;flex:0 0 auto}
+        .ls-glyph::before,.ls-glyph::after{content:'';position:absolute;inset:0;border:2px solid var(--cyan);
+            clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);animation:spin 9s linear infinite}
+        .ls-glyph::after{inset:8px;border-color:var(--amber);animation-direction:reverse;animation-duration:6s}
+        .ls-title{font-family:var(--disp);font-weight:900;font-size:1.05rem;letter-spacing:.18em;color:#eef8ff;
+            text-shadow:0 0 14px rgba(79,227,255,.4);white-space:nowrap}
+        .ls-sub{font-family:var(--mono);font-size:.55rem;letter-spacing:.34em;color:var(--amber);margin-top:4px;white-space:nowrap}
+        .ls-led{margin-left:auto;width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--green);
+            box-shadow:0 0 10px var(--green);animation:blink 1.4s infinite}
+        .ls-status{font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;color:var(--txt);
+            min-height:1.4em;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .ls-track{height:12px;background:#050d14;border:1px solid var(--line);position:relative;overflow:hidden}
+        .ls-fill{height:100%;width:0%;background:linear-gradient(90deg,#0f6f8f,var(--cyan));
+            box-shadow:0 0 14px rgba(79,227,255,.75);transition:width .3s ease}
+        .ls-track::after{content:'';position:absolute;top:0;bottom:0;left:0;width:38%;
+            background:linear-gradient(90deg,transparent,rgba(238,248,255,.16),transparent);
+            transform:translateX(-120%);animation:lsScan 1.6s linear infinite}
+        @keyframes lsScan{to{transform:translateX(340%)}}
+        .ls-meta{display:flex;justify-content:space-between;margin-top:10px}
+        .ls-percent{font-family:var(--disp);font-weight:700;font-size:1.35rem;color:var(--cyan);
+            text-shadow:0 0 12px rgba(79,227,255,.55)}
+        .ls-step{font-family:var(--mono);font-size:.58rem;letter-spacing:.26em;color:var(--dim);align-self:flex-end}
+        .ls-overlay.ls-error .ls-fill{background:linear-gradient(90deg,#8f1f30,var(--red));box-shadow:0 0 14px rgba(255,84,112,.7)}
+        .ls-overlay.ls-error .ls-status{color:var(--red)}
+        .ls-overlay.ls-error .ls-percent{color:var(--red);text-shadow:0 0 12px rgba(255,84,112,.55)}
+        .ls-overlay.ls-error .ls-led{background:var(--red);box-shadow:0 0 10px var(--red)}
     </style>
 </head>
 
