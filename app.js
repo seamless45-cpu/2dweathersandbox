@@ -3443,6 +3443,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'freezingRate'), guiControls.freezingRate);
     gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'meltingRate'), guiControls.meltingRate);
     gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'evapRate'), guiControls.evapRate);
+    gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'inactiveDroplets'), NUM_DROPLETS);
     gl.useProgram(postProcessingProgram);
     gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'exposure'), guiControls.exposure);
   }
@@ -3867,6 +3868,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         initRainDrops();
         setupPrecipitationBuffers();
         guiControls.inactiveDroplets = NUM_DROPLETS;
+        gl.useProgram(precipitationProgram);
+        gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'inactiveDroplets'), NUM_DROPLETS);
       })
       .name('Enable Precipitation');
 
@@ -4926,21 +4929,55 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const precipVertexBuffer_1 = gl.createBuffer();
   const precipitationTF_1 = gl.createTransformFeedback();
 
+  const precipDisplayVao_0 = gl.createVertexArray();
+  const precipDisplayVao_1 = gl.createVertexArray();
+  const precipSpriteQuadBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, precipSpriteQuadBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1.0, -1.0, // triangle strip quad in sprite-local space
+    1.0, -1.0, -1.0, 1.0, 1.0, 1.0
+  ]),
+                gl.STATIC_DRAW);
+
+  var destDisplayVAO = precipDisplayVao_0;
+
 
   var rainDrops;
 
   function initRainDrops()
   {
-    rainDrops = [];
+    rainDrops = new Float32Array(NUM_DROPLETS * 5);
     // generate inactive droplets with random values to be used as seeds for random spawning
     for (var i = 0; i < NUM_DROPLETS; i++) {
-      // seperate push for each element is fastest
-      rainDrops.push(Math.random());         // X
-      rainDrops.push(Math.random());         // Y
-      rainDrops.push(-10.0 + Math.random()); // water negative to disable
-      rainDrops.push(Math.random());         // ice
-      rainDrops.push(Math.random());         // density
+      let j = i * 5;
+      rainDrops[j + 0] = Math.random();         // X
+      rainDrops[j + 1] = Math.random();         // Y
+      rainDrops[j + 2] = -10.0 + Math.random(); // water negative to disable
+      rainDrops[j + 3] = Math.random();         // ice
+      rainDrops[j + 4] = Math.random();         // density
     }
+  }
+
+  function bindPrecipDisplayVao(vao, particleBuffer)
+  {
+    const stride = 5 * Float32Array.BYTES_PER_ELEMENT;
+    gl.bindVertexArray(vao);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, precipSpriteQuadBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, gl.FALSE, 0, 0);
+    gl.vertexAttribDivisor(0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, particleBuffer);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, stride, 0);
+    gl.vertexAttribDivisor(1, 1);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 2, gl.FLOAT, gl.FALSE, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
+    gl.vertexAttribDivisor(2, 1);
+    gl.enableVertexAttribArray(3);
+    gl.vertexAttribPointer(3, 1, gl.FLOAT, gl.FALSE, stride, 4 * Float32Array.BYTES_PER_ELEMENT);
+    gl.vertexAttribDivisor(3, 1);
   }
 
   function setupPrecipitationBuffers()
@@ -4948,7 +4985,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.bindVertexArray(precipitationVao_0);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, precipVertexBuffer_0);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(rainDrops), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, rainDrops, gl.DYNAMIC_COPY);
     gl.enableVertexAttribArray(positionAttribLocation);
     gl.enableVertexAttribArray(massAttribLocation);
     gl.enableVertexAttribArray(densityAttribLocation);
@@ -5027,6 +5064,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     // TRANSFORM_FEEBACK buffer
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
     gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+
+    bindPrecipDisplayVao(precipDisplayVao_0, precipVertexBuffer_0);
+    bindPrecipDisplayVao(precipDisplayVao_1, precipVertexBuffer_1);
+    destDisplayVAO = precipDisplayVao_0;
 
     gl.bindBuffer(gl.ARRAY_BUFFER, null); // buffers are bound via VAO's
     gl.bindVertexArray(fluidVao);         // set screenfilling rect again
@@ -5730,10 +5771,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1f(gl.getUniformLocation(humidityDisplayProgram, 'dryLapse'), dryLapse);
 
   gl.useProgram(precipDisplayProgram);
-  gl.uniform2f(gl.getUniformLocation(precipDisplayProgram, 'resolution'), sim_res_x, sim_res_y);
-  gl.uniform2f(gl.getUniformLocation(precipDisplayProgram, 'texelSize'), texelSizeX, texelSizeY);
-  gl.uniform1i(gl.getUniformLocation(precipDisplayProgram, 'waterTex'), 0);
-  gl.uniform1i(gl.getUniformLocation(precipDisplayProgram, 'wallTex'), 2);
+  gl.uniform1i(gl.getUniformLocation(precipDisplayProgram, 'baseTex'), 0);
+  gl.uniform1f(gl.getUniformLocation(precipDisplayProgram, 'wrapShift'), 0.0);
 
   gl.useProgram(skyBackgroundDisplayProgram);
   gl.uniform2f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'resolution'), sim_res_x, sim_res_y);
@@ -5776,6 +5815,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform2f(gl.getUniformLocation(precipitationProgram, 'resolution'), sim_res_x, sim_res_y);
   gl.uniform2f(gl.getUniformLocation(precipitationProgram, 'texelSize'), texelSizeX, texelSizeY);
   gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'dryLapse'), dryLapse);
+  gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'inactiveDroplets'), NUM_DROPLETS);
+  gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'numDroplets'), NUM_DROPLETS);
   gl.useProgram(IRtempDisplayProgram);
   gl.uniform2f(gl.getUniformLocation(IRtempDisplayProgram, 'resolution'), sim_res_x, sim_res_y);
   gl.uniform2f(gl.getUniformLocation(IRtempDisplayProgram, 'texelSize'), texelSizeX, texelSizeY);
@@ -5835,6 +5876,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   // preload uniform locations for tiny performance gain
   var uniformLocation_boundaryProgram_iterNum = gl.getUniformLocation(boundaryProgram, 'iterNum');
+  var uniformLocation_precipitationProgram_iterNum = gl.getUniformLocation(precipitationProgram, 'iterNum');
+  var uniformLocation_precipitationProgram_inactiveDroplets = gl.getUniformLocation(precipitationProgram, 'inactiveDroplets');
+  var uniformLocation_lightningLocationProgram_iterNum = gl.getUniformLocation(lightningLocationProgram, 'iterNum');
+  var uniformLocation_precipDisplay_aspectRatios = gl.getUniformLocation(precipDisplayProgram, 'aspectRatios');
+  var uniformLocation_precipDisplay_view = gl.getUniformLocation(precipDisplayProgram, 'view');
+  var uniformLocation_precipDisplay_canvasSize = gl.getUniformLocation(precipDisplayProgram, 'canvasSize');
+  var uniformLocation_precipDisplay_wrapShift = gl.getUniformLocation(precipDisplayProgram, 'wrapShift');
 
 
   for (i = 0; i < weatherStations.length; i++) { // initial measurement at weather stations
@@ -6091,6 +6139,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               srcVAO = precipitationVao_0;
               destTF = precipitationTF_1;
               destVAO = precipitationVao_1;
+              destDisplayVAO = precipDisplayVao_1;
             } else {
               gl.bindTexture(gl.TEXTURE_2D, lightTexture_1);
               gl.bindFramebuffer(gl.FRAMEBUFFER, lightFrameBuff_0);
@@ -6098,6 +6147,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               srcVAO = precipitationVao_1;
               destTF = precipitationTF_0;
               destVAO = precipitationVao_0;
+              destDisplayVAO = precipDisplayVao_0;
             }
             even = !even;
 
@@ -6108,10 +6158,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.bindFramebuffer(gl.FRAMEBUFFER, precipitationFeedbackFrameBuff);
             gl.clear(gl.COLOR_BUFFER_BIT);         // clear precipitation feedback
 
-            if (guiControls.enablePrecipitation) { // move precipitation, HUGE PERFORMANCE BOTTLENECK!
+            if (guiControls.enablePrecipitation) { // move precipitation (spawn path is budgeted to keep this cheap)
 
               gl.useProgram(precipitationProgram);
-              gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'iterNum'), iterNum);
+              gl.uniform1f(uniformLocation_precipitationProgram_iterNum, iterNum);
               gl.enable(gl.BLEND);
               gl.blendFunc(gl.ONE, gl.ONE); // add everything together
               gl.activeTexture(gl.TEXTURE0);
@@ -6138,7 +6188,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
                 // console.log(sampleValues[0]);  // number of inactive droplets
                 guiControls.inactiveDroplets = sampleValues[0];
                 // gl.useProgram(precipitationProgram); // already set
-                gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'inactiveDroplets'), sampleValues[0]);
+                gl.uniform1f(uniformLocation_precipitationProgram_inactiveDroplets, sampleValues[0]);
               }
 
               gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
@@ -6148,7 +6198,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
               // Extract lightningLocation from precipitationfeedback
               gl.useProgram(lightningLocationProgram);
-              gl.uniform1f(gl.getUniformLocation(lightningLocationProgram, 'iterNum'), iterNum);
+              gl.uniform1f(uniformLocation_lightningLocationProgram_iterNum, iterNum);
 
               gl.activeTexture(gl.TEXTURE0);
               gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
@@ -6487,13 +6537,21 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       if (guiControls.showDrops) {
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        // draw drops over clouds
-        // draw precipitation
+        // draw drops over clouds as instanced quads (works on mobile; gl_PointSize does not)
         gl.useProgram(precipDisplayProgram);
-        gl.uniform2f(gl.getUniformLocation(precipDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-        gl.uniform3f(gl.getUniformLocation(precipDisplayProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
-        gl.bindVertexArray(destVAO);
-        gl.drawArrays(gl.POINTS, 0, NUM_DROPLETS);
+        gl.uniform2f(uniformLocation_precipDisplay_aspectRatios, sim_aspect, canvas_aspect);
+        gl.uniform3f(uniformLocation_precipDisplay_view, cam.curXpos, cam.curYpos, cam.curZoom);
+        gl.uniform2f(uniformLocation_precipDisplay_canvasSize, canvas.width, canvas.height);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, baseTexture_1);
+        gl.bindVertexArray(destDisplayVAO);
+
+        const wrapCopies = guiControls.wrapHorizontally ? 3 : 1;
+        for (let w = 0; w < wrapCopies; w++) {
+          gl.uniform1f(uniformLocation_precipDisplay_wrapShift, guiControls.wrapHorizontally ? (w - 1) * 2.0 : 0.0);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, NUM_DROPLETS);
+        }
+
         gl.bindVertexArray(fluidVao); // set screenfilling rect again
         gl.disable(gl.BLEND);
       }
