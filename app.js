@@ -1254,6 +1254,122 @@ class Weatherstation
 let weatherStations = []; // array holding all weather stations
 
 
+// Replace NaN and infinite values in the simulation state loaded from a save file with safe values, and returns how many values were replaced.
+// Even a single NaN value will spread trough the entire fluid simulation within a few iterations, making the simulation explode right after loading.
+// Save files can contain NaN values when the simulation had already exploded before it was saved, or when the file is corrupted.
+function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
+{
+  // texture channel indices, matching the defines in shaders/common.glsl
+  const BASE_TEMPERATURE = 3;
+
+  const WATER_TOTAL = 0;
+
+  const WALL_TYPE = 0;
+  const WALL_DISTANCE = 1; // 0 means the cell is a wall
+  const WALLTYPE_WATER = 2;
+
+  const numCells = sim_res_x * sim_res_y;
+  let numReplaced = 0;
+
+  // The temperature in the base texture is potential temperature, which is nearly uniform within a horizontal row of cells,
+  // so the first valid temperature found in a row is a good replacement for invalid ones in that same row.
+  let rowReferenceTemp = new Float32Array(sim_res_y);
+
+  for (var y = 0; y < sim_res_y; y++) {
+    rowReferenceTemp[y] = NaN;
+    for (var x = 0; x < sim_res_x; x++) {
+      let i = (x + y * sim_res_x) * 4;
+      if (wallTexI8[i + WALL_DISTANCE] != 0 && Number.isFinite(baseTexF32[i + BASE_TEMPERATURE])) { // valid temperature in a non wall cell
+        rowReferenceTemp[y] = baseTexF32[i + BASE_TEMPERATURE];
+        break;
+      }
+    }
+  }
+
+  // Rows without a single valid temperature take the temperature of the nearest valid row below them.
+  // If there is no valid row below, fall back to a neutral temperature of about 15 degrees C.
+  let nearestValidTemp = CtoK(15.0);
+  for (var y = 0; y < sim_res_y; y++) {
+    if (Number.isFinite(rowReferenceTemp[y]))
+      nearestValidTemp = rowReferenceTemp[y];
+    else
+      rowReferenceTemp[y] = nearestValidTemp;
+  }
+
+  for (var cell = 0; cell < numCells; cell++) {
+    let i = cell * 4;
+    let y = Math.floor(cell / sim_res_x);
+
+    let isWall = wallTexI8[i + WALL_DISTANCE] == 0;
+    let isWaterWall = isWall && wallTexI8[i + WALL_TYPE] == WALLTYPE_WATER;
+
+    // base texture: horizontal & vertical velocity, pressure, temperature
+    for (var c = 0; c < 4; c++) {
+      if (!Number.isFinite(baseTexF32[i + c])) {
+        if (c == BASE_TEMPERATURE) {
+          if (isWaterWall)
+            baseTexF32[i + c] = CtoK(25.0); // standard water temperature
+          else if (isWall)
+            baseTexF32[i + c] = 1000.0; // wall indicator value, just like the shaders use
+          else
+            baseTexF32[i + c] = rowReferenceTemp[y];
+        } else {
+          baseTexF32[i + c] = 0.0; // velocities and pressure
+        }
+        numReplaced++;
+      }
+    }
+
+    // water texture: total water, cloud water, precipitation / soil moisture, smoke / snow
+    for (var c = 0; c < 4; c++) {
+      if (!Number.isFinite(waterTexF32[i + c])) {
+        if (c == WATER_TOTAL && isWall)
+          waterTexF32[i + c] = isWaterWall ? 1002.0 : 1001.0; // wall indicator values, just like the shaders use
+        else
+          waterTexF32[i + c] = 0.0;
+        numReplaced++;
+      }
+    }
+  }
+
+  // precipitation droplets: any droplet carrying a NaN position or mass would inject NaN values into the fluid via the precipitation feedback texture
+  for (var d = 0; d < NUM_DROPLETS; d++) {
+    let i = d * 5;
+
+    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) && Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
+        Number.isFinite(precipArray[i + 4]))
+      continue;
+
+    // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
+    precipArray[i + 0] = Math.random();         // X, seed for random spawn position
+    precipArray[i + 1] = Math.random();         // Y
+    precipArray[i + 2] = -10.0 + Math.random(); // negative water mass disables the droplet
+    precipArray[i + 3] = Math.random();         // ice, seed for random spawn position
+    precipArray[i + 4] = Math.random();         // density
+    numReplaced++;
+  }
+
+  return numReplaced;
+}
+
+
+// Replace settings that could not be loaded from the savefile with their defaults.
+// NaN and infinite values are turned into null when a save file is written (JSON), and settings may be missing entirely in save files from older versions.
+// Loading such values into the simulation would put NaN values into the shaders, making the simulation explode.
+function sanitizeGuiControls(controlsObject)
+{
+  for (const [key, value] of Object.entries(controlsObject)) {
+    if (value === -1)                                 // -1 indicates a value that could not be loaded from the savefile
+      controlsObject[key] = guiControls_default[key];
+  }
+
+  for (const [key, defaultValue] of Object.entries(guiControls_default)) {
+    if (typeof defaultValue === 'number' && !Number.isFinite(controlsObject[key])) // null, NaN and undefined(missing) are not valid numerical settings
+      controlsObject[key] = defaultValue;
+  }
+}
+
+
 async function loadData()
 {
   let file = document.getElementById('fileInput').files[0];
@@ -1317,6 +1433,14 @@ async function loadData()
       let precipArrayBlob = dataBlob.slice(sliceStart, sliceEnd);
       let precipArrayBuf = await precipArrayBlob.arrayBuffer();
       let precipArray = new Float32Array(precipArrayBuf);
+
+      // replace any NaN or infinite values in the loaded state to prevent NaN values from making the simulation explode when loading
+      let numReplaced = sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray);
+
+      if (numReplaced > 0) {
+        console.warn('Replaced ' + numReplaced + ' NaN or infinite values in save file');
+        alert('This save file contained ' + numReplaced + ' NaN or infinite values, which would have made the simulation explode.\nThey were replaced with safe values.');
+      }
 
       if (version == saveFileVersionID) {             // only load settings and weather stations from save file if it's the newest version with all the settings included
         sliceStart = sliceEnd;
@@ -3471,13 +3595,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
 
   } else {
-    setupDatGui(guiControlsFromSaveFile);                     // use settings from save file
+    setupDatGui(guiControlsFromSaveFile); // use settings from save file
 
-    for (const [key, value] of Object.entries(guiControls)) { // set numerical values that could not be loaded from the savefile to their defaults.
-      if (value === -1) {
-        guiControls[key] = guiControls_default[key];
-      }
-    }
+    sanitizeGuiControls(guiControls);     // set values that could not be loaded from the savefile to their defaults
   }
 
   function setGuiUniforms()
