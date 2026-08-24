@@ -1309,7 +1309,7 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
     // values are just as capable of poisoning the first simulation pass.
     for (var c = 0; c < 4; c++) {
       const value = baseTexF32[i + c];
-      const maxValue = c == BASE_TEMPERATURE ? 1000.0 : (c == 2 ? 1.0e6 : 100.0);
+      const maxValue = c == BASE_TEMPERATURE ? 1000.0 : (c == 2 ? 100.0 : 10.0);
       if (!Number.isFinite(value) || Math.abs(value) > maxValue) {
         if (c == BASE_TEMPERATURE) {
           if (isWaterWall)
@@ -1349,8 +1349,9 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
         Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
         Number.isFinite(precipArray[i + 4]) &&
         Math.abs(precipArray[i + 0]) <= 10.0 && Math.abs(precipArray[i + 1]) <= 10.0 &&
-        Math.abs(precipArray[i + 2]) <= 10000.0 && Math.abs(precipArray[i + 3]) <= 10000.0 &&
-        Math.abs(precipArray[i + 4]) <= 10000.0)
+        Math.abs(precipArray[i + 0]) <= 1.1 && Math.abs(precipArray[i + 1]) <= 1.1 &&
+        Math.abs(precipArray[i + 2]) <= 10.0 && Math.abs(precipArray[i + 3]) <= 10.0 &&
+        Math.abs(precipArray[i + 4]) <= 10.0)
       continue;
 
     // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
@@ -7053,7 +7054,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         let precipBufferValues = new ArrayBuffer(NUM_DROPLETS * valsPerDroplet * Float32Array.BYTES_PER_ELEMENT);
         let precipBufferArray = new Float32Array(precipBufferValues);
-        gl.bindBuffer(gl.ARRAY_BUFFER, precipVertexBuffer_0);
+        // Save the buffer that contains the current transform-feedback state. `even`
+        // is toggled after each pass, so it points to the next source buffer.
+        gl.bindBuffer(gl.ARRAY_BUFFER, even ? precipVertexBuffer_1 : precipVertexBuffer_0);
         gl.getBufferSubData(gl.ARRAY_BUFFER, 0, precipBufferArray);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); // unbind again
 
