@@ -1303,9 +1303,14 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
     let isWall = wallTexI8[i + WALL_DISTANCE] == 0;
     let isWaterWall = isWall && wallTexI8[i + WALL_TYPE] == WALLTYPE_WATER;
 
-    // base texture: horizontal & vertical velocity, pressure, temperature
+    // base texture: horizontal & vertical velocity, pressure, temperature.
+    // A save can contain finite but unusably huge values too (for example a
+    // previous overflow may have been flushed to a very large float). Those
+    // values are just as capable of poisoning the first simulation pass.
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(baseTexF32[i + c])) {
+      const value = baseTexF32[i + c];
+      const maxValue = c == BASE_TEMPERATURE ? 1000.0 : (c == 2 ? 100.0 : 10.0);
+      if (!Number.isFinite(value) || Math.abs(value) > maxValue) {
         if (c == BASE_TEMPERATURE) {
           if (isWaterWall)
             baseTexF32[i + c] = CtoK(25.0); // standard water temperature
@@ -1322,7 +1327,11 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
 
     // water texture: total water, cloud water, precipitation / soil moisture, smoke / snow
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(waterTexF32[i + c])) {
+      const value = waterTexF32[i + c];
+      // Keep loaded values within the ranges the shader's thermodynamic
+      // equations can represent without overflowing.
+      const maxValue = c == WATER_TOTAL ? 2000.0 : 1000.0;
+      if (!Number.isFinite(value) || value < -1000.0 || value > maxValue) {
         if (c == WATER_TOTAL && isWall)
           waterTexF32[i + c] = isWaterWall ? 1002.0 : 1001.0; // wall indicator values, just like the shaders use
         else
@@ -1336,8 +1345,13 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
   for (var d = 0; d < NUM_DROPLETS; d++) {
     let i = d * 5;
 
-    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) && Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
-        Number.isFinite(precipArray[i + 4]))
+    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) &&
+        Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
+        Number.isFinite(precipArray[i + 4]) &&
+        Math.abs(precipArray[i + 0]) <= 10.0 && Math.abs(precipArray[i + 1]) <= 10.0 &&
+        Math.abs(precipArray[i + 0]) <= 1.1 && Math.abs(precipArray[i + 1]) <= 1.1 &&
+        Math.abs(precipArray[i + 2]) <= 10.0 && Math.abs(precipArray[i + 3]) <= 10.0 &&
+        Math.abs(precipArray[i + 4]) <= 10.0)
       continue;
 
     // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
@@ -7040,7 +7054,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         let precipBufferValues = new ArrayBuffer(NUM_DROPLETS * valsPerDroplet * Float32Array.BYTES_PER_ELEMENT);
         let precipBufferArray = new Float32Array(precipBufferValues);
-        gl.bindBuffer(gl.ARRAY_BUFFER, precipVertexBuffer_0);
+        // Save the buffer that contains the current transform-feedback state. `even`
+        // is toggled after each pass, so it points to the next source buffer.
+        gl.bindBuffer(gl.ARRAY_BUFFER, even ? precipVertexBuffer_1 : precipVertexBuffer_0);
         gl.getBufferSubData(gl.ARRAY_BUFFER, 0, precipBufferArray);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); // unbind again
 
