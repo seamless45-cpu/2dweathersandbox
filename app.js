@@ -1303,9 +1303,14 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
     let isWall = wallTexI8[i + WALL_DISTANCE] == 0;
     let isWaterWall = isWall && wallTexI8[i + WALL_TYPE] == WALLTYPE_WATER;
 
-    // base texture: horizontal & vertical velocity, pressure, temperature
+    // base texture: horizontal & vertical velocity, pressure, temperature.
+    // A save can contain finite but unusably huge values too (for example a
+    // previous overflow may have been flushed to a very large float). Those
+    // values are just as capable of poisoning the first simulation pass.
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(baseTexF32[i + c])) {
+      const value = baseTexF32[i + c];
+      const maxValue = c == BASE_TEMPERATURE ? 1000.0 : (c == 2 ? 1.0e6 : 100.0);
+      if (!Number.isFinite(value) || Math.abs(value) > maxValue) {
         if (c == BASE_TEMPERATURE) {
           if (isWaterWall)
             baseTexF32[i + c] = CtoK(25.0); // standard water temperature
@@ -1322,7 +1327,11 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
 
     // water texture: total water, cloud water, precipitation / soil moisture, smoke / snow
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(waterTexF32[i + c])) {
+      const value = waterTexF32[i + c];
+      // Keep loaded values within the ranges the shader's thermodynamic
+      // equations can represent without overflowing.
+      const maxValue = c == WATER_TOTAL ? 2000.0 : 1000.0;
+      if (!Number.isFinite(value) || value < -1000.0 || value > maxValue) {
         if (c == WATER_TOTAL && isWall)
           waterTexF32[i + c] = isWaterWall ? 1002.0 : 1001.0; // wall indicator values, just like the shaders use
         else
@@ -1336,8 +1345,12 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
   for (var d = 0; d < NUM_DROPLETS; d++) {
     let i = d * 5;
 
-    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) && Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
-        Number.isFinite(precipArray[i + 4]))
+    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) &&
+        Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
+        Number.isFinite(precipArray[i + 4]) &&
+        Math.abs(precipArray[i + 0]) <= 10.0 && Math.abs(precipArray[i + 1]) <= 10.0 &&
+        Math.abs(precipArray[i + 2]) <= 10000.0 && Math.abs(precipArray[i + 3]) <= 10000.0 &&
+        Math.abs(precipArray[i + 4]) <= 10000.0)
       continue;
 
     // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
