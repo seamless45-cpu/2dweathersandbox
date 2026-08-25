@@ -65,6 +65,14 @@ void disableDroplet()
 
 void main()
 {
+  // Zero-initialize every feedback output. Several code paths only assign a
+  // subset of these components; leaving the rest undefined let uninitialized
+  // garbage get additively blended into the fluid feedback texture (most
+  // visibly at the inactive-droplet counter pixel and at lightning pixels),
+  // corrupting cells and seeding NaNs.
+  feedback = vec4(0.0);
+  deposition = vec2(0.0);
+
   newPos = dropPosition;
   newMass = mass;         // amount of water and ice carried
   newDensity = density;   // determines fall speed
@@ -102,11 +110,21 @@ void main()
                                                                 // if (spawnChance > rand2d(mass.xy)) {
                                                                 //  float spawnChance = (water[CLOUD] - threshold) / inactiveDroplets * resolution.x * resolution.y * spawnChanceMult;
 
-      float spawnChance = ((water[CLOUD] - threshold) / (inactiveDroplets + 10.0)) * resolution.x * resolution.y * spawnChanceMult; // 20.0  50.0
+      // Per-droplet spawn probability. The expected total number of spawns
+      // across all inactive droplets equals (cloud - threshold) * cells *
+      // spawnChanceMult, independent of how many droplets are currently
+      // inactive. The previous "+ 10.0" denominator did not scale with the
+      // droplet count: once most droplets were active it shrank toward ~10
+      // and the per-droplet probability exploded, spawning every remaining
+      // droplet at once and feeding back on itself.
+      float spawnChance = ((water[CLOUD] - threshold) / max(inactiveDroplets, 1.0)) * resolution.x * resolution.y * spawnChanceMult;
+      spawnChance = clamp(spawnChance, 0.0, 1.0);
 
-      //    float nrmRand = random2d(vec2(mass[WATER] * 0.2324, iterNum * 0.1783 + random(mass[ICE]))); // normalized random value
-
-      float nrmRand = fract(pow(water[CLOUD] * 10.0, 2.0));
+      // This MUST be a real per-droplet random value. The old expression
+      // fract(pow(cloud*10, 2)) is a deterministic function of cloud water
+      // that collapses to 0 for almost all floating-point inputs, so every
+      // inactive droplet in any cell above threshold spawned simultaneously.
+      float nrmRand = random2d(vec2(mass[WATER] * 0.2324 + iterNum * 0.1783, mass[ICE] * 0.9173 + dropPosition.x));
 
       if (spawnChance > nrmRand) {                                       // spawn precipitation particle
         spawned = true;
@@ -138,6 +156,11 @@ void main()
             feedback[START_ITERNUM] = iterNum;
             feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
             gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
+            // The lightning marker is written to the corner pixel, but the
+            // particle itself must not survive as a zero-water droplet: with
+            // newMass[WATER]==0 the inactive test (mass[WATER] < 0.) fails next
+            // frame and it would wake up at the corner as a phantom droplet.
+            disableDroplet();
           }
         } else {
           newMass[WATER] = initalMass; // rain

@@ -104,6 +104,10 @@ void main()
 
     float precipCoalescence = max(-precipFeedback[VAPOR], 0.); // how much cloud water turns into rain
 
+    // Clamp to the cloud water actually present so a sudden precipitation
+    // burst (e.g. synchronized spawning) can't push CLOUD negative. A negative
+    // cloud value is unphysical and feeds the gravity/advection calculations.
+    precipCoalescence = min(precipCoalescence, max(water[CLOUD], 0.0));
     water[CLOUD] -= precipCoalescence;
     water[TOTAL] -= precipCoalescence;
 
@@ -418,9 +422,14 @@ void main()
 
         float realTempAboveSurface = potentialToRealT(baseAboveSurface[TEMPERATURE], texCoordX0Yp.y);
 
-        float evaporation = calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), water[SOIL_MOISTURE]) * 0.10;
+        // The air cell directly above (WALLTYPE_LAND case) adds this same
+        // calcEvaporation() value to water[TOTAL]. Removing only a fraction
+        // here manufactured water vapor out of nothing and made the vapor
+        // field over land grow without bound until the simulation exploded.
+        // Remove exactly the same amount so soil moisture is conserved.
+        float evaporation = calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), water[SOIL_MOISTURE]);
 
-        water[SOIL_MOISTURE] -= evaporation;
+        water[SOIL_MOISTURE] = max(water[SOIL_MOISTURE] - evaporation, 0.0);
 
 
         if (int(iterNum) % 100 == 0) { // snow and soil moisture smoothing
