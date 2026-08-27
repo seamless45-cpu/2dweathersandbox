@@ -72,7 +72,7 @@ float calcEvaporation(float T, float W, float V, float M)                       
   return maxW * deficit * landEvaporation * vegFactor * moistureFactor;
 }
 
-float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.00025 - moist * 0.00020 - precip * 0.02, 0.); }
+float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.000025 - moist * 0.000020 - precip * 0.002, 0.); }
 
 void main()
 {
@@ -323,7 +323,7 @@ void main()
           fireIntensity = max(fireIntensity, 0.);
           base[TEMPERATURE] += fireIntensity;   // heat
           water[SMOKE] += fireIntensity * 2.0;  // smoke
-          water[TOTAL] += fireIntensity * 0.50; // extra water from burning trees, both from water in the wood and from burning of hydrogen and hydrocarbons
+          water[TOTAL] += fireIntensity * 0.05; // extra water from burning trees, both from water in the wood and from burning of hydrogen and hydrocarbons
         }
         // nobreak!
       case WALLTYPE_INDUSTRIAL:
@@ -331,7 +331,7 @@ void main()
           int texFragX = int(fragCoord.x) % 80;
 
           if (wall[VERT_DISTANCE] == 5 && (texFragX == 18 || texFragX == 22)) { // cooling towers
-            water[TOTAL] += 7.2;
+            water[TOTAL] += 0.0072;
             // base[TEMPERATURE] += 0.02;
             base.xy *= 0.5;
             base.y += 0.05;

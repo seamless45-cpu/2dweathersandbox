@@ -162,6 +162,7 @@ void main()
     float dT = condensation * evapHeat * 1.0;           // how much that water phase change would change the temperature
     base[TEMPERATURE] += dT;
     realTemp += dT;
+    water[TOTAL] -= condensation;                  // vapor -> cloud or cloud -> vapor: conserve mass
     water[CLOUD] += condensation;
 
 
