@@ -354,8 +354,8 @@ const guiControls_default = {
   sunIntensity : 1.0,
   waterTemperature : 25.0, // °C
   dynamicWaterTemperature : true,
-  landEvaporation : 0.00000001,
-  waterEvaporation : 0.00000002,
+  landEvaporation : 0.0005,
+  waterEvaporation : 0.001,
   evapHeat : 2.90,          //  Real: 2260 J/g
   meltingHeat : 0.43,       //  Real:  334 J/g
   condensationRate : 0.0050,
@@ -3842,13 +3842,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'dynamicWaterTemperature'), guiControls.dynamicWaterTemperature ? 1.0 : 0.0);
     });
 
-    water_folder.add(guiControls, 'landEvaporation', 0.0, 0.00002, 0.00000001)
+    water_folder.add(guiControls, 'landEvaporation', 0.0, 0.01, 0.0005)
       .onChange(function() {
         gl.useProgram(boundaryProgram);
         gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'landEvaporation'), guiControls.landEvaporation);
       })
       .name('Land Evaporation');
-    water_folder.add(guiControls, 'waterEvaporation', 0.0, 0.00004, 0.00000002)
+    water_folder.add(guiControls, 'waterEvaporation', 0.0, 0.02, 0.001)
       .onChange(function() {
         gl.useProgram(boundaryProgram);
         gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterEvaporation'), guiControls.waterEvaporation);

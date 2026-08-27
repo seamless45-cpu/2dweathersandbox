@@ -255,8 +255,9 @@ void main()
       }
 
       if (water[SOIL_MOISTURE] > 0.0 && tempC > 0.0) { // water evaporating from ground
-        float evaporation = max((maxWater(CtoK(tempC)) - water[TOTAL]) * 0.00001, 0.);
+        float evaporation = max((maxWater(CtoK(tempC)) - water[TOTAL]) * 0.0005, 0.);
         water[SOIL_MOISTURE] -= evaporation;
+        water[TOTAL] += evaporation; // add evaporated water to vapor
       }
     }
   }
