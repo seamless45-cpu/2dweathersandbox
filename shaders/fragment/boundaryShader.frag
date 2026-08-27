@@ -65,7 +65,9 @@ void exchangeWith(vec2 texCoord) // exchange temperature and water
 
 float calcEvaporation(float T, float W, float V, float M)                                             // temperature, total water, vegetation, soil moisture
 {
-  return max((maxWater(T) - W) * landEvaporation * (V / 127. + 0.1) * min(M + 1.0, 50.0), 0.); // landEvaporation should be adjusted to remove * 0.05 factor
+  float maxW = maxWater(T);
+  float deficit = max(maxW - W, 0.0) / maxW;
+  return maxW * deficit * landEvaporation * (V / 127. + 0.1) * min(M + 1.0, 50.0);
 }
 
 float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.00025 - moist * 0.00020 - precip * 0.02, 0.); }
@@ -417,7 +419,7 @@ void main()
 
         float realTempAboveSurface = potentialToRealT(baseAboveSurface[TEMPERATURE], texCoordX0Yp.y);
 
-        float evaporation = calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), water[SOIL_MOISTURE]) * 0.10;
+        float evaporation = calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), water[SOIL_MOISTURE]) * 0.10 / 100.;
 
         water[SOIL_MOISTURE] -= evaporation;
 
