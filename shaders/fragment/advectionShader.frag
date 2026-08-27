@@ -437,9 +437,9 @@ void main()
   if (wall[DISTANCE] == 0) { // is wall
 
     if (wall[TYPE] == WALLTYPE_WATER) {
-      water[TOTAL] = 1002.;
+      water[TOTAL] = 0.0;
     } else { // any type of land wall
-      water[TOTAL] = 1001.;
+      water[TOTAL] = 0.0;
     }
 
   } else { // no wall
