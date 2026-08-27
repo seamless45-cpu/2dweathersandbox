@@ -65,13 +65,19 @@ float columnOpacity(float e, float numCells) { return 1.0 - pow(max(1.0 - e, 0.0
 float airTempAt(vec2 tc) { return potentialToRealT(texture(baseTex, tc)[TEMPERATURE], tc.y); }
 
 // Surfaces radiate like black bodies (emissivity = 1.0) at their own temperature.
-// Wall cells store their real temperature directly in baseTex.
-float surfaceEmission(ivec4 wallSample, vec2 tc)
+// Only WATER wall cells store a real temperature in baseTex. Land-type wall cells
+// store a sentinel (1000.0 + snow-melt signal) in the temperature channel for the
+// pressure shader, so it must never be used as a radiation temperature:
+// IR_emitted(1000) is ~56,700 W/m2, about 123x a real surface flux, which cooled
+// the air above land by ~0.11 K per iteration until the simulation exploded.
+// Land-type surfaces radiate at the temperature of the air cell touching the
+// surface instead (same as the pre-rework behaviour), fires run 100 K hotter.
+float surfaceEmission(ivec4 wallSample, vec2 surfaceTc, float surfaceAirT)
 {
-  float T = texture(baseTex, tc)[TEMPERATURE];
-  if (wallSample[TYPE] == WALLTYPE_FIRE)
-    T += 100.0; // fire emits extra heat
-  return IR_emitted(T);
+  if (wallSample[TYPE] == WALLTYPE_WATER)
+    return IR_emitted(texture(baseTex, surfaceTc)[TEMPERATURE]); // real water temperature
+
+  return IR_emitted(surfaceAirT + (wallSample[TYPE] == WALLTYPE_FIRE ? 100.0 : 0.0));
 }
 // ========================================================================
 
@@ -133,7 +139,7 @@ void main()
       float IR_down;
 
       if (texture(wallTex, tcUp)[DISTANCE] == 0) { // a surface / ceiling is within IR_STEP cells above
-        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp);
+        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp, realTemp); // current cell is the air cell touching that surface
       } else {
         float eMid = airEmissivity(texture(waterTex, tcUpMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));
@@ -150,7 +156,14 @@ void main()
         float eLocal = airEmissivity(water, cellHeightCompensation);
         float cellsToSurface = clamp(float(wall[VERT_DISTANCE] - 1), 0.0, float(IR_STEP)); // air cells in between
         float tau = columnOpacity(eLocal, cellsToSurface);
-        IR_up = mix(surfaceEmission(wallBelowFar, tcDn), IR_emitted(realTemp), tau);
+
+        // temperature of the air cell directly above that surface (this cell is 1..IR_STEP cells higher)
+        vec2 tcSurfaceAir = texCoord - vec2(0.0, texelSize.y * clamp(float(wall[VERT_DISTANCE] - 1), 0.0, float(IR_STEP)));
+        float surfaceAirT = realTemp; // fallback: this cell's temperature
+        if (texture(wallTex, tcSurfaceAir)[DISTANCE] != 0)
+          surfaceAirT = potentialToRealT(texture(baseTex, tcSurfaceAir)[TEMPERATURE], tcSurfaceAir.y);
+
+        IR_up = mix(surfaceEmission(wallBelowFar, tcDn, surfaceAirT), IR_emitted(realTemp), tau);
       } else {
         float eMid = airEmissivity(texture(waterTex, tcDnMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));

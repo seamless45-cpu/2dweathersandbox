@@ -176,7 +176,7 @@ float dT_saturated(float dTdry,
 
 float maxWater(float T)
 {
-  return pow((T / wf_devider), wf_pow); // T in Kelvin, w in grams per m^3
+  return pow(max(T, 0.0) / wf_devider, wf_pow); // T in Kelvin, w in grams per m^3. clamp at 0 K: pow of a negative base is undefined (NaN) in GLSL
 }
 
 float dewpoint(float W)
