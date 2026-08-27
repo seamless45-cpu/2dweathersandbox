@@ -82,9 +82,9 @@ void main()
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
     if (texCoord.y < 0.20) // set dew point
-      water[TOTAL] = maxWater(realTemp - 2.0);
+      water[TOTAL] = maxWater(realTemp - 2.0) * 0.5; // reduce initial vapor to prevent explosion
     else
-      water[TOTAL] = maxWater(realTemp - 20.0);
+      water[TOTAL] = maxWater(realTemp - 20.0) * 0.5;
 
     water[CLOUD] = max(water[TOTAL] - maxWater(realTemp), 0.0); // calculate cloud water
   }
