@@ -65,7 +65,7 @@ void exchangeWith(vec2 texCoord) // exchange temperature and water
 
 float calcEvaporation(float T, float W, float V, float M)                                             // temperature, total water, vegetation, soil moisture
 {
-  return max((maxWater(T) - W) * landEvaporation * (V / 127. + 0.1) * min(M + 1.0, 50.0) * 0.05, 0.); // landEvaporation should be adjusted to remove * 0.05 factor
+  return max((maxWater(T) - W) * landEvaporation * (V / 127. + 0.1) * min(M + 1.0, 50.0), 0.); // landEvaporation should be adjusted to remove * 0.05 factor
 }
 
 float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.00025 - moist * 0.00020 - precip * 0.02, 0.); }
@@ -361,7 +361,7 @@ void main()
           float LocalWaterTemperature = texture(baseTex, texCoordX0Ym)[TEMPERATURE];                                       // water temperature
           base[TEMPERATURE] += (LocalWaterTemperature - realTemp - 1.0) / influenceDevider * waterHeatExchangeRate;        // air heated or cooled by water
 
-          water[TOTAL] += max((maxWater(LocalWaterTemperature) - water[TOTAL]) * waterEvaporation / influenceDevider, 0.); // water evaporating
+          water[TOTAL] += max((maxWater(LocalWaterTemperature) - water[TOTAL]) * waterEvaporation, 0.); // water evaporating
         }
         break;
       }
