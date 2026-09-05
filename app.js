@@ -552,24 +552,31 @@ function IR_temp(IR)
 }
 
 ////////////// Water Functions ///////////////
+// These have to stay in sync with shaders/common.glsl, where the same limits keep the simulation
+// itself from blowing up: the saturation curve rises with the power of 17, so without a physical
+// temperature range and a cap, one corrupt cell asks for gigagrams of water.
 const wf_devider = 250.0;
 const wf_pow = 17.0;
+const minPhysTemp = 173.15; // -100 °C
+const maxPhysTemp = 333.15; // +60 °C
+const maxWaterCap = 200.0;  // g/m³
 
 function maxWater(Td)
 {
-  return Math.pow(Td / wf_devider,
-                  wf_pow); // w = ((Td)/(250))^(18) // Td in Kelvin, w in grams per m^3
+  if (!Number.isFinite(Td))
+    return 0.0;
+  const T = Math.min(Math.max(Td, minPhysTemp), maxPhysTemp);
+  return Math.min(Math.pow(T / wf_devider, wf_pow), maxWaterCap); // w = ((Td)/(250))^(17) // Td in Kelvin, w in grams per m^3
 }
 
 function dewpoint(W)
 {
-  //  if (W < 0.00001) // can't remember why this was here...
-  //    return 0.0;
-  //  else
-  return wf_devider * Math.pow(W, 1.0 / wf_pow);
+  if (!Number.isFinite(W) || W < 0.00001)
+    return 0.0;
+  return Math.min(wf_devider * Math.pow(Math.min(W, maxWaterCap), 1.0 / wf_pow), maxPhysTemp);
 }
 
-function relativeHumd(T, W) { return (W / maxWater(T)) * 100.0; }
+function relativeHumd(T, W) { return (Math.max(W, 0.0) / Math.max(maxWater(T), 0.0001)) * 100.0; }
 
 // Print funtions:
 
@@ -1254,19 +1261,30 @@ class Weatherstation
 let weatherStations = []; // array holding all weather stations
 
 
-// Replace NaN and infinite values in the simulation state loaded from a save file with safe values, and returns how many values were replaced.
+// Replace NaN, infinite and out of range values in the simulation state loaded from a save file with safe values, and returns how many values were replaced.
 // Even a single NaN value will spread trough the entire fluid simulation within a few iterations, making the simulation explode right after loading.
 // Save files can contain NaN values when the simulation had already exploded before it was saved, or when the file is corrupted.
+// Finite but impossible values are limited as well: that is what the state of an already exploded
+// simulation looks like when it is saved without having produced a NaN yet, and a single cell with
+// 1e15 g/m³ of vapor starts the explosion again in the first iteration, because both evaporation
+// and latent heat scale with the maximum water content of the air.
 function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
 {
   // texture channel indices, matching the defines in shaders/common.glsl
+  const BASE_PRESSURE = 2;
   const BASE_TEMPERATURE = 3;
 
   const WATER_TOTAL = 0;
+  const WATER_CLOUD = 1;
+  const WATER_PRECIP_OR_SOIL = 2;
 
   const WALL_TYPE = 0;
   const WALL_DISTANCE = 1; // 0 means the cell is a wall
   const WALLTYPE_WATER = 2;
+
+  const maxVel = 1.0;      // cells per iteration, far above any real wind speed
+  const maxPressure = 0.5; // pressure is added to the velocities every iteration, so it has to stay small
+  const maxSurfaceWater = 100.0; // smoke or precipitation in the air
 
   const numCells = sim_res_x * sim_res_y;
   let numReplaced = 0;
@@ -1296,6 +1314,16 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
       rowReferenceTemp[y] = nearestValidTemp;
   }
 
+  // Potential temperature contains the lapse rate of the whole column, so the limit for an air cell
+  // moves up with its height. This has to match cleanTempK() in shaders/common.glsl.
+  let lapseTotal = 120.0; // 12 km with a normal lapse rate, used when the settings are not known yet
+  if (typeof dryLapse == 'number' && Number.isFinite(dryLapse))
+    lapseTotal = dryLapse;
+  else if (typeof guiControls == 'object' && guiControls)
+    lapseTotal = (Number(guiControls.simHeight) * Number(guiControls.dryLapseRate)) / 1000.0;
+  if (!Number.isFinite(lapseTotal) || lapseTotal <= 0.0)
+    lapseTotal = 120.0;
+
   for (var cell = 0; cell < numCells; cell++) {
     let i = cell * 4;
     let y = Math.floor(cell / sim_res_x);
@@ -1305,28 +1333,56 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
 
     // base texture: horizontal & vertical velocity, pressure, temperature
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(baseTexF32[i + c])) {
-        if (c == BASE_TEMPERATURE) {
-          if (isWaterWall)
-            baseTexF32[i + c] = CtoK(25.0); // standard water temperature
-          else if (isWall)
-            baseTexF32[i + c] = 1000.0; // wall indicator value, just like the shaders use
-          else
-            baseTexF32[i + c] = rowReferenceTemp[y];
-        } else {
-          baseTexF32[i + c] = 0.0; // velocities and pressure
+      let v = baseTexF32[i + c];
+      let fixed = v;
+
+      if (c == BASE_TEMPERATURE) {
+        if (isWaterWall)
+          fixed = clamp(Number.isFinite(v) ? v : CtoK(25.0), CtoK(0.0), CtoK(40.0)); // water temperature is absolute and limited, just like in the shaders
+        else if (isWall)
+          fixed = Number.isFinite(v) ? v : 1000.0; // wall indicator value, just like the shaders use
+        else {
+          let lapse = (y / sim_res_y) * lapseTotal;
+          fixed = Number.isFinite(v) ? clamp(v, minPhysTemp + lapse, maxPhysTemp + lapse) : rowReferenceTemp[y];
         }
+      } else if (!Number.isFinite(v)) {
+        fixed = 0.0; // velocities and pressure
+      } else if (c == BASE_PRESSURE) {
+        fixed = clamp(v, -maxPressure, maxPressure);
+      } else {
+        fixed = clamp(v, -maxVel, maxVel);
+      }
+
+      if (fixed !== v) {
+        baseTexF32[i + c] = fixed;
         numReplaced++;
       }
     }
 
     // water texture: total water, cloud water, precipitation / soil moisture, smoke / snow
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(waterTexF32[i + c])) {
-        if (c == WATER_TOTAL && isWall)
-          waterTexF32[i + c] = isWaterWall ? 1002.0 : 1001.0; // wall indicator values, just like the shaders use
-        else
-          waterTexF32[i + c] = 0.0;
+      let v = waterTexF32[i + c];
+      let fixed = v;
+
+      if (c == WATER_TOTAL && isWall) {
+        fixed = Number.isFinite(v) && v > 1000.0 ? v : (isWaterWall ? 1002.0 : 1001.0); // wall indicator values, just like the shaders use
+        fixed = Math.max(fixed, 0.0);
+      } else if (c == WATER_TOTAL) {
+        fixed = Number.isFinite(v) ? clamp(v, 0.0, maxWaterCap) : 0.0;
+      } else if (c == WATER_CLOUD) {
+        fixed = Number.isFinite(v) && v >= 0.0 ? Math.min(v, Number.isFinite(waterTexF32[i + WATER_TOTAL]) ? waterTexF32[i + WATER_TOTAL] : 0.0) : 0.0; // cloud water is part of the total water
+        if (isWall)
+          fixed = 0.0; // walls never contain cloud water
+      } else if (!Number.isFinite(v)) {
+        fixed = 0.0;
+      } else if (isWall) {
+        fixed = c == WATER_PRECIP_OR_SOIL ? clamp(v, 0.0, 1000.0) : clamp(v, 0.0, 4000.0); // soil moisture in mm, snow cover in cm
+      } else {
+        fixed = clamp(v, 0.0, maxSurfaceWater); // precipitation and smoke in the air
+      }
+
+      if (fixed !== v) {
+        waterTexF32[i + c] = fixed;
         numReplaced++;
       }
     }
@@ -1336,8 +1392,17 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
   for (var d = 0; d < NUM_DROPLETS; d++) {
     let i = d * 5;
 
-    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) && Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
-        Number.isFinite(precipArray[i + 4]))
+    let broken = false;
+    for (var c = 0; c < 5; c++) {
+      if (!Number.isFinite(precipArray[i + c]))
+        broken = true;
+    }
+    if (precipArray[i + 2] > 50.0 || precipArray[i + 3] > 50.0) // a droplet that carries an impossible amount of water comes from an exploded simulation
+      broken = true;
+    if (precipArray[i + 2] >= 0.0 && (Math.abs(precipArray[i + 0]) > 1.0 || Math.abs(precipArray[i + 1]) > 1.0)) // active, but outside the simulation area: it would never come back
+      broken = true;
+
+    if (!broken)
       continue;
 
     // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
@@ -1367,7 +1432,36 @@ function sanitizeGuiControls(controlsObject)
     if (typeof defaultValue === 'number' && !Number.isFinite(controlsObject[key])) // null, NaN and undefined(missing) are not valid numerical settings
       controlsObject[key] = defaultValue;
   }
+
+  // A save file can contain any number, also ones far outside what the sliders allow. The rates
+  // below all scale how fast water is added to the air or how much heat a phase change releases,
+  // so an absurd value makes the vapor cycle run away before the limits in the shaders can damp it.
+  for (const [key, range] of Object.entries(guiControls_range)) {
+    let v = Number(controlsObject[key]);
+    if (!Number.isFinite(v))
+      v = guiControls_default[key];
+    controlsObject[key] = clamp(v, range[0], range[1]);
+  }
 }
+
+// Same limits as the dat.gui sliders, see setupDatGui().
+const guiControls_range = {
+  landEvaporation : [ 0.0, 0.01 ],
+  waterEvaporation : [ 0.0, 0.02 ],
+  evapHeat : [ 0.0, 5.0 ],
+  meltingHeat : [ 0.0, 5.0 ],
+  condensationRate : [ 0.001, 0.020 ],
+  globalDrying : [ 0.0, 0.0001 ],
+  globalHeating : [ -0.001, 0.001 ],
+  greenhouseGases : [ 0.0, 0.01 ],
+  waterGreenHouseEffect : [ 0.0, 0.01 ],
+  IR_rate : [ 0.0, 10.0 ],
+  evapRate : [ 0.0001, 0.005 ],
+  growthRate0C : [ 0.0001, 0.005 ],
+  growthRate_30C : [ 0.0001, 0.005 ],
+  waterTemperature : [ 0.0, 40.0 ],
+  brushIntensity : [ 0.005, 0.05 ],
+};
 
 
 async function loadData()
@@ -3609,6 +3703,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'dynamicWaterTemperature'), guiControls.dynamicWaterTemperature ? 1.0 : 0.0);
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'evapHeat'), guiControls.evapHeat);
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterWeight'), guiControls.waterWeight);
+    // water cells without a stored temperature (older save files, flooded land) fall back to this one
+    gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
     gl.useProgram(velocityProgram);
     gl.uniform1f(gl.getUniformLocation(velocityProgram, 'dragMultiplier'), guiControls.dragMultiplier);
     gl.uniform1f(gl.getUniformLocation(velocityProgram, 'wind'), guiControls.wind);
@@ -3834,6 +3930,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.uniform1f(gl.getUniformLocation(advectionProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
         gl.useProgram(lightingProgram);
         gl.uniform1f(gl.getUniformLocation(lightingProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
+        gl.useProgram(boundaryProgram);
+        gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
       })
       .name('Lake / Sea Temperature (°C)');
 
@@ -5811,6 +5909,19 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   dryLapse = (guiControls.simHeight * guiControls.dryLapseRate) / 1000.0; // total lapse rate from bottem to top of atmosphere
 
 
+  // generate Initial temperature profile
+
+  var initial_T = new Float32Array(504); // sim_res_y + 1
+  var initial_W = new Float32Array(504); // the matching water vapor profile, see setupShader.frag
+
+  for (var y = 0; y < sim_res_y + 1; y++) {
+    let altitude = y / (sim_res_y + 1) * guiControls.simHeight;
+    var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
+
+    initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
+    initial_W[y] = maxWater(CtoK(realTemp) - (y < sim_res_y * 0.2 ? 2.0 : 20.0)); // near the dew point of the initial profile, like setupShader.frag does
+  }
+
   // generate sounding data for forcing in sim
 
   var realWorldSounding_T = new Float32Array(504);   // sim_res_y + 1
@@ -5824,7 +5935,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       let soundingSample = soundingForSim[y];
 
       realWorldSounding_T[y] = realToPotentialT(CtoK(soundingSample.t), y); // initial temperature profile
-      realWorldSounding_W[y] = maxWater(CtoK(soundingSample.td), y);        // initial temperature profile
+      realWorldSounding_W[y] = maxWater(CtoK(soundingSample.td));          // saturation at the dew point
       realWorldSounding_Vel[y] = soundingSample.vel;
     }
     // console.log(realWorldSounding_T);
@@ -5834,16 +5945,28 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     console.log('No valid sounding loaded!');
   }
 
-  // generate Initial temperature profile
-
-  var initial_T = new Float32Array(504); // sim_res_y + 1
-
-  for (var y = 0; y < sim_res_y + 1; y++) {
-    let altitude = y / (sim_res_y + 1) * guiControls.simHeight;
-    var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
-
-    initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
+  // The profiles are uploaded to the shaders and used as the target of the sounding forcing, so
+  // they must not contain NaN or values outside the physical range: one NaN row forces the vapor
+  // and temperature of every single cell in that row, which is a vapor explosion. When no sounding
+  // could be loaded, the initial state of the simulation is used as the target instead, so that
+  // forcing does nothing instead of pulling the atmosphere towards zero.
+  function repairProfile(profile, fallback, lo, hi)
+  {
+    for (var i = 0; i < profile.length; i++) {
+      let last = Math.min(i, sim_res_y); // rows above the simulation repeat the top row, they must never be read as zero
+      let v = i <= sim_res_y ? profile[i] : fallback[last];
+      if (!Number.isFinite(v))
+        v = fallback[last];
+      profile[i] = clamp(Number.isFinite(v) ? v : lo, lo, hi);
+    }
+    return profile;
   }
+
+  repairProfile(initial_T, initial_T, minPhysTemp, maxPhysTemp + dryLapse);
+  repairProfile(initial_W, initial_W, 0.0, maxWaterCap);
+  repairProfile(realWorldSounding_T, initial_T, minPhysTemp, maxPhysTemp + dryLapse);
+  repairProfile(realWorldSounding_W, initial_W, 0.0, maxWaterCap);
+  repairProfile(realWorldSounding_Vel, new Float32Array(504), -1.0, 1.0);
 
   function createProfileTexture(profile)
   {
