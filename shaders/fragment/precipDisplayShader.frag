@@ -29,7 +29,7 @@ void main()
 
   float opacity = (mass_out[WATER] + mass_out[ICE]) * 0.10;
 
-  if (mass_out[ICE] > 0.) {                           // has ice
+  if (mass_out[ICE] > 0.0001) {                         // has ice
     if (mass_out[WATER] < 0.0001) {                  // has no liquid water, pure ice
       if (density_out < 1.0)                          // snow
         fragmentColor = vec4(1.0, 1.0, 1.0, opacity); // white
@@ -38,8 +38,10 @@ void main()
     } else {                                          // mix of ice and water
       fragmentColor = vec4(0.5, 1.0, 1.0, opacity);   // light blue
     }
-  } else {                                            // rain
+  } else if (mass_out[WATER] > 0.0001) {             // rain (no ice)
     fragmentColor = vec4(0.0, 0.5, 1.0, opacity);     // dark blue
+  } else {
+    discard;                                         // no mass, discard
   }
 
   // fragmentColor = vec4(1.0, 1.0, 0.0, 1.0); // all highly visible for DEBUG
