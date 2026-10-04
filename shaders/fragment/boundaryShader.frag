@@ -75,6 +75,13 @@ void main()
   base = texture(baseTex, texCoord);
   water = texture(waterTex, texCoord);
 
+  // Total water this cell starts the iteration with, before the precipitation
+  // feedback is applied below. The neighbouring cell (the ground for an air
+  // cell and the air cell for the ground) reads the same texel of the same
+  // input texture, so both sides of the land evaporation agree on it - with
+  // the feedback applied only one of them would see the rain.
+  float incomingTotalWater = water[TOTAL];
+
   vec4 precipFeedback = texture(precipFeedbackTex, texCoord);
 
 
@@ -104,6 +111,10 @@ void main()
 
     float precipCoalescence = max(-precipFeedback[VAPOR], 0.); // how much cloud water turns into rain
 
+    // Clamp to the cloud water actually present so a sudden precipitation
+    // burst (e.g. synchronized spawning) can't push CLOUD negative. A negative
+    // cloud value is unphysical and feeds the gravity/advection calculations.
+    precipCoalescence = min(precipCoalescence, max(water[CLOUD], 0.0));
     water[CLOUD] -= precipCoalescence;
     water[TOTAL] -= precipCoalescence;
 
@@ -346,7 +357,13 @@ void main()
       case WALLTYPE_LAND:
         if (wall[VERT_DISTANCE] <= wallVerticalInfluence) {
 
-          float evaporation = calcEvaporation(realTemp, water[TOTAL], float(wall[VEGETATION]), waterInSurface[SOIL_MOISTURE]) / influenceDevider;
+          float moistureAvailable = max(waterInSurface[SOIL_MOISTURE], 0.);
+
+          // Cap the vapor by what the ground can actually give up. The surface
+          // cell below clamps its soil moisture at zero, so without this limit
+          // dry ground would keep adding vapor to the air that is never taken
+          // out of the soil - vapor manufactured out of nothing.
+          float evaporation = min(calcEvaporation(realTemp, incomingTotalWater, float(wall[VEGETATION]), moistureAvailable) / influenceDevider, moistureAvailable);
 
           water[TOTAL] += evaporation;
           base[TEMPERATURE] -= evaporation * evapHeat * 0.5;                                // evaporative cooling (half the real value, to prevent boring non convective conditions)
@@ -387,6 +404,10 @@ void main()
 
       vec4 waterX0Yp = texture(waterTex, texCoordX0Yp);
 
+      // Soil moisture of this iteration, before the rain of this iteration is
+      // added. The air cell above limits its evaporation with the same value.
+      float incomingSoilMoisture = max(water[SOIL_MOISTURE], 0.);
+
       vec2 precipDeposition = texture(precipDepositionTex, texCoord).xy;
 
       vec4 lightAboveSurface = texture(lightTex, texCoordX0Yp); // sample cell above surface
@@ -418,9 +439,15 @@ void main()
 
         float realTempAboveSurface = potentialToRealT(baseAboveSurface[TEMPERATURE], texCoordX0Yp.y);
 
-        float evaporation = calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), water[SOIL_MOISTURE]) * 0.10;
+        // The air cell directly above (WALLTYPE_LAND case) adds this same
+        // calcEvaporation() value to water[TOTAL]. Removing only a fraction
+        // here manufactured water vapor out of nothing and made the vapor
+        // field over land grow without bound until the simulation exploded.
+        // Remove exactly the same amount so soil moisture is conserved; the
+        // air cell caps its gain with the same incoming soil moisture.
+        float evaporation = min(calcEvaporation(realTempAboveSurface, waterAboveSurface[TOTAL], float(wall[VEGETATION]), incomingSoilMoisture), incomingSoilMoisture);
 
-        water[SOIL_MOISTURE] -= evaporation;
+        water[SOIL_MOISTURE] = max(water[SOIL_MOISTURE] - evaporation, 0.0);
 
 
         if (int(iterNum) % 100 == 0) { // snow and soil moisture smoothing
