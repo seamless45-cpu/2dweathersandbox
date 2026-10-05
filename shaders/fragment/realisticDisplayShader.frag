@@ -533,16 +533,19 @@ void main()
       break;
     case WALLTYPE_WATER:
 
-      // Precomputed values (tweak to taste)
+      // Travelling wave components of the water surface. This was five summed octaves,
+      // which is ten sin() calls for every water pixel (five frequencies for each of the
+      // left and right travelling waves) to move the surface by a fraction of a cell. Two
+      // components keep the wind dependent motion, at 40% of the cost.
       // Frequencies
-      const int numWaveComp = 5;
-      const float freqs[numWaveComp] = float[numWaveComp](2.3, 3.7, 5.1, 7.6, 21.7);
+      const int numWaveComp = 2;
+      const float freqs[numWaveComp] = float[numWaveComp](2.3, 6.7);
       // Amplitudes
-      const float amps[numWaveComp] = float[numWaveComp](0.05, 0.03, 0.02, 0.015, 0.004);
+      const float amps[numWaveComp] = float[numWaveComp](0.055, 0.025);
       // Speeds
-      const float speeds[numWaveComp] = float[numWaveComp](0.006, 0.011, 0.018, 0.025, 0.05);
+      const float speeds[numWaveComp] = float[numWaveComp](0.008, 0.024);
       // Phases (in radians)
-      const float phases[numWaveComp] = float[numWaveComp](1.2, 3.9, 0.7, 5.1, 3.1);
+      const float phases[numWaveComp] = float[numWaveComp](1.2, 4.4);
 
       // Sum up the components
       float waveSignalL = 0.0;
@@ -596,11 +599,14 @@ void main()
 
         // ── wave surface detail ──────────────────────────────────────────────
         // Specular highlight from the wave signal, simulating sunlight glinting
-        // off a rippled surface. Uses single-frequency slope for performance.
-        float waveSlope = cos(fragCoord.x * freqs[0] + iterNum * speeds[0] + phases[0]) * amps[0] * freqs[0];
-        float ripple = 0.5 + 0.5 * sin(fragCoord.x * freqs[2] - iterNum * speeds[2] + phases[2]);
+        // off a rippled surface. Everything comes from the wave sum above: no extra
+        // sin() calls, and the power is done as multiplications instead of pow().
+        float waveSlope = (waveSignalL + waveSignalR) * freqs[0];
+        float ripple = 0.5 + 0.5 * sin(waveSignalL * 12.0 + phases[1]);
 
-        float glint = pow(clamp(1.0 - abs(waveSlope) * 0.3 - (1.0 - ripple) * 0.2, 0.0, 1.0), 6.0);
+        float glintBase = clamp(1.0 - abs(waveSlope) * 0.3 - (1.0 - ripple) * 0.2, 0.0, 1.0);
+        float glint2 = glintBase * glintBase;
+        float glint = glint2 * glint2 * glint2; // ^6 without pow()
 
         // only the very top of the water column gets the reflection of the sky
         float surfaceBand = smoothstep(0.25, 0.0, waterLevel - fract(fragCoord.y));
@@ -653,18 +659,28 @@ void main()
 
 
     // ── rainbow ────────────────────────────────────────────────────────────────
-    vec2 rainbowCenter = vec2(0.0, -1.5 + abs(sunAngle) * 0.60);
-    float centerDist = length(onScreenUV - rainbowCenter) * 1.3;
-    const float cameraHeight = 1.0;
-    float angle = atan(centerDist / cameraHeight) * rad2deg;
-    float waveLength = map_range(angle, 40.0, 42.5, 400., 700.);
-    float rainSnowFactor = map_rangeC(KtoC(realTemp), 0.0, 5.0, 0.0, 1.0);
+    // A rainbow needs a low, bright sun and rain in the air. This branch runs for every
+    // sky pixel, and the arc geometry (length, atan), the spectral curve and the alpha
+    // term used to be computed unconditionally even in a clear sky at noon. Bail out
+    // before the geometry unless the arc can actually contribute.
     float rainbowIntensity = min(pow(lightIntensity, 2.0) * 1.9, 1.0) * min(water[PRECIPITATION] * 3.0, 1.0);
-    float arcFade = smoothstep(39.5, 40.5, angle) * smoothstep(43.0, 42.0, angle);
-    vec3 rainbowCol = spectral_zucconi(waveLength) * rainbowIntensity * rainSnowFactor * 0.7 * arcFade;
+    float rainSnowFactor = map_rangeC(KtoC(realTemp), 0.0, 5.0, 0.0, 1.0);
 
-    emittedLight += rainbowCol;
-    opacity = max(opacity - length(rainbowCol), 0.);
+    if (rainbowIntensity > 0.001 && rainSnowFactor > 0.001) {
+      vec2 rainbowCenter = vec2(0.0, -1.5 + abs(sunAngle) * 0.60);
+      float centerDist = length(onScreenUV - rainbowCenter) * 1.3;
+      const float cameraHeight = 1.0;
+      float angle = atan(centerDist / cameraHeight) * rad2deg;
+      float arcFade = smoothstep(39.5, 40.5, angle) * smoothstep(43.0, 42.0, angle);
+
+      if (arcFade > 0.0) {
+        float waveLength = map_range(angle, 40.0, 42.5, 400., 700.);
+        vec3 rainbowCol = spectral_zucconi(waveLength) * rainbowIntensity * rainSnowFactor * 0.7 * arcFade;
+
+        emittedLight += rainbowCol;
+        opacity = max(opacity - length(rainbowCol), 0.);
+      }
+    }
 
 
     if (wall[VERT_DISTANCE] >= 0 && wall[VERT_DISTANCE] < 10) { // near surface
@@ -840,9 +856,25 @@ void main()
     shadowLight += max(cos(min(length(vecFromMouse) * 5.0, 2.)) * 1.0, 0.0); // smooth flashlight
   }
 
+  // ── skylight in the shadows ──────────────────────────────────────────────
+  // The ambient term is the emitted light that the lighting pass collected and the blur
+  // chain diffused: the light reflected off the clouds, the ground and the sea. It is what
+  // a shadowed surface is lit by in the real world, but the display only added it below the
+  // simulation area (the pow(1 - (-texCoord.y * 15)) ramp, which is zero for every texCoord.y
+  // >= 0, that is, the whole visible scene). Every pixel in a cast shadow therefore received
+  // as little light as the minShadowLight floor, a deep blue-black, and terrain shadows read
+  // as wet black paint. The ground, unlike the sky, is a reflecting surface, so it gets the
+  // full ambient term; the sky is left to the sky shader, which handles this itself. The term
+  // is weighted and capped so a shadow stays darker than the sunlit side of the same surface.
   vec3 ambientLight = texture(ambientLightTex, texCoord).rgb;
 
-  onLight += ambientLight * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
+  if (texCoord.y >= 0.) {
+    const float ambientGroundFactor = 2.2; // reflected light reaches every surface regardless of cloud
+    onLight += ambientLight * ambientGroundFactor;
+    onLight = min(onLight, vec3(0.30));    // skylight never bridges the gap to direct sunlight
+  } else {
+    onLight += ambientLight * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
+  }
 
 
   finalLight += vec3(shadowLight) + onLight;

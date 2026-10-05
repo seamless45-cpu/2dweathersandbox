@@ -7,6 +7,9 @@ Headless regression tests for the two bugs fixed in this branch:
 | `test_display.mjs` | the "Show Droplets" overlay. Injects a known grid of rain drops, renders with the toggle off and on and compares the two screenshots pixel by pixel: how much of the screen the overlay covers, what colour it is, and what it costs in frame rate. |
 | `test_landonly.mjs` | land vapour conservation. Turns the whole domain into vegetated land, sets `landEvaporation` to the slider maximum and watches the water budget: total water (must stay flat), soil moisture (must actually fall when the air above evaporates from it) and NaN. |
 | `shaderlab.mjs` | the droplet display shaders on their own: compiles them, builds the instanced VAO exactly like `app.js` does and rasterises a grid of drops. Useful to tell a shader problem from an application state problem. |
+| `shot_default.mjs` | screenshots the default view: default preset, no brushes, fixed sun angle, after N iterations. This is the scene a brightness, haze or sharpness report is about. |
+| `fps_probe.mjs` | measures render FPS in a given camera and display state, so removing an effect can be judged by numbers (`ZOOM`, `CAMY`, `SUNANGLE`, `MODE`, `ITERS`). |
+| `test_visual.mjs` | screenshots a vegetated coast a few hundred iterations in (`SUNANGLE`, `ZOOM`, `SHOWDROPS`). |
 
 ## Running
 

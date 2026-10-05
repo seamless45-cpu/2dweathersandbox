@@ -126,7 +126,6 @@
             background: var(--bg-alt);
             border-radius: var(--radius) var(--radius) 0 0;
         }
-        .panel-h .ic { color: var(--accent); font-size: 0.9rem; }
         .panel-h h3 { font-size: 0.85rem; font-weight: 600; color: var(--text); margin: 0; }
         .panel-h .tag { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); padding: 2px 8px; background: var(--bg-alt); border: 1px solid var(--panel-border); border-radius: 4px; }
         .panel-b { padding: 20px; }
@@ -546,7 +545,7 @@
             <span class="sec-idx">1</span><h2>Sounding Forcing</h2><span class="sec-line"></span><span class="sec-tag">Pre-flight</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Atmospheric Sounding</h3><span class="tag">Real-world data</span></header>
+            <header class="panel-h"><h3>Atmospheric Sounding</h3><span class="tag">Real-world data</span></header>
             <div class="panel-b sounding-grid">
                 <div>
                     <div class="field">
@@ -583,10 +582,10 @@
 
         <!-- ═══ 02 LIVE SOUNDING PIPELINE ═══ -->
         <div class="sec-h">
-            <span class="sec-idx">2</span><h2>Live Sounding Pipeline</h2><span class="sec-line"></span><span class="sec-tag">RAOB Uplink</span>
+            <span class="sec-idx">2</span><h2>Live Sounding Pipeline</h2><span class="sec-line"></span><span class="sec-tag">Live data</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Vertical Profile Acquisition</h3><span class="tag" id="pipeSrc">Standby</span></header>
+            <header class="panel-h"><h3>Vertical Profile Acquisition</h3><span class="tag" id="pipeSrc">Standby</span></header>
             <div class="panel-b">
                 <div class="stages">
                     <div class="stage" data-stage="station"><div class="sn">Stage 1</div><div class="ss">Station</div></div>
@@ -608,7 +607,7 @@
                     </div>
                 </div>
                 <div class="plog" id="pipeLog"></div>
-                <button class="btn ghost retry" id="pipeRetry" type="button">↻ Retry Uplink</button>
+                <button class="btn ghost retry" id="pipeRetry" type="button">Retry</button>
             </div>
         </section>
 
@@ -617,7 +616,7 @@
             <span class="sec-idx">3</span><h2>Grid Resolution</h2><span class="sec-line"></span><span class="sec-tag">GPU Critical</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Simulation Grid</h3><span class="tag">Performance</span></header>
+            <header class="panel-h"><h3>Simulation Grid</h3><span class="tag">Performance</span></header>
             <div class="panel-b">
                 <form id="startBtn" oninput="updateSetupSliders();">
                     <div class="resolution-warning">
@@ -664,7 +663,7 @@
             <span class="sec-idx">4</span><h2>Briefing</h2><span class="sec-line"></span><span class="sec-tag">Useful Tips</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Useful Tips</h3><span class="tag">Ops</span></header>
+            <header class="panel-h"><h3>Useful Tips</h3><span class="tag">Ops</span></header>
             <div class="panel-b" id="help">
                 <ul>
                     <li>Performance is mostly <b>GPU</b> — Adreno 610, Adreno 613, Adreno 619, Mali G57 MCX, Mali G68 MCX/MPX, Mali G610 MCX/MPX, Mali G615 MCX/MPX, Mali G720 MCX/MPX, Adreno 620, Adreno 710, Adreno 720, Adreno 722, Adreno 810 or better recommended for realtime gameplay. Phones, smartwatches, smart TV, PC, laptop and more are supported. <b>(needs a browser)</b></li>
@@ -678,7 +677,7 @@
             <span class="sec-idx">5</span><h2>Controls</h2><span class="sec-line"></span><span class="sec-tag">Input Map</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Control Surface</h3><span class="tag">Mouse + Keys</span></header>
+            <header class="panel-h"><h3>Control Surface</h3><span class="tag">Mouse + Keys</span></header>
             <div class="panel-b controls">
                 <h3>Mouse</h3>
                 <ul>
@@ -726,10 +725,10 @@
 
         <!-- ═══ 06 SUPPORT ═══ -->
         <div class="sec-h lazy">
-            <span class="sec-idx">6</span><h2>Support</h2><span class="sec-line"></span><span class="sec-tag">Uplink</span>
+            <span class="sec-idx">6</span><h2>Support</h2><span class="sec-line"></span><span class="sec-tag">Get in touch</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>Support Channel</h3><span class="tag">TikTok</span></header>
+            <header class="panel-h"><h3>Support channel</h3><span class="tag">TikTok</span></header>
             <div class="panel-b support">
                 <h1>Support Me on TikTok</h1>
                 Please support me to get popular on TikTok —
@@ -823,7 +822,7 @@
         el.classList.remove('active', 'ok', 'fail');
         if (state) el.classList.add(state);
         el.querySelector('.ss').textContent =
-            state === 'active' ? 'LINKING' : state === 'ok' ? 'OK' : state === 'fail' ? 'FAIL' : name.toUpperCase();
+            state === 'active' ? 'Linking…' : state === 'ok' ? 'Done' : state === 'fail' ? 'Failed' : name.charAt(0).toUpperCase() + name.slice(1);
     }
     function resetStages() { ['station','uplink','parse','profile'].forEach(s => setStage(s, null)); }
 
@@ -836,8 +835,8 @@
     function resolveStation() {
         const sel = $id('stationSelect');
         if (!sel || !sel.value) return null;
-        const v = sel.value.trim().toUpperCase();
-        const txt = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent || v).toUpperCase();
+        const v = sel.value.trim();
+        const txt = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent || v);
         if (/^[A-Z]{4}$/.test(v)) return { icao: v, label: txt.replace(v, '').replace(/^[·\s]+/, '') || v };
         const m = CATALOG.find(c => txt.includes(c[1].split(' ')[0]) || v.includes(c[0]));
         if (m) return { icao: m[0], label: m[1] };
@@ -893,25 +892,25 @@
         const pTop = 100, pBot = 1050, LR = Math.log(pBot / pTop);
         const yFor = p => mT + (Math.log(pBot / p) / LR) * ph;
         const xFor = (t, p) => mL + ((t + 80) / 120) * pw * 0.72 + (1 - (yFor(p) - mT) / ph) * pw * 0.28;
-        c.font = '9px "Share Tech Mono", monospace'; c.textBaseline = 'middle';
+        c.font = '9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'; c.textBaseline = 'middle';
         [1000,850,700,500,400,300,250,200,150,100].forEach(p => {
             const y = yFor(p);
-            c.strokeStyle = 'rgba(79,227,255,.10)'; c.beginPath(); c.moveTo(mL, y); c.lineTo(w - mR, y); c.stroke();
-            c.fillStyle = 'rgba(94,127,144,.9)'; c.fillText(p, 6, y);
+            c.strokeStyle = 'rgba(226,232,240,.9)'; c.beginPath(); c.moveTo(mL, y); c.lineTo(w - mR, y); c.stroke();
+            c.fillStyle = 'rgba(113,128,150,.9)'; c.fillText(p, 6, y);
         });
         for (let t = -80; t <= 40; t += 20) {
-            c.strokeStyle = t === 0 ? 'rgba(79,227,255,.22)' : 'rgba(79,227,255,.07)';
+            c.strokeStyle = t === 0 ? 'rgba(49,130,206,.35)' : 'rgba(226,232,240,.9)';
             c.beginPath(); c.moveTo(xFor(t, pBot), yFor(pBot)); c.lineTo(xFor(t, pTop), yFor(pTop)); c.stroke();
         }
-        const path = (key, col, glow) => {
-            c.strokeStyle = col; c.lineWidth = 2.2; c.shadowColor = glow; c.shadowBlur = 8; c.beginPath();
+        const path = (key, col) => {
+            c.strokeStyle = col; c.lineWidth = 1.8; c.beginPath();
             prof.forEach((l, i) => { const x = xFor(l[key], l.p), y = yFor(l.p); i ? c.lineTo(x, y) : c.moveTo(x, y); });
-            c.stroke(); c.shadowBlur = 0;
+            c.stroke();
         };
-        path('td', '#4fe3ff', 'rgba(79,227,255,.7)');
-        path('t', '#ffb454', 'rgba(255,180,84,.7)');
-        c.fillStyle = 'rgba(255,180,84,.9)'; c.fillText('TEMP', w - mR - 34, mT + 8);
-        c.fillStyle = 'rgba(79,227,255,.9)'; c.fillText('DWPT', w - mR - 34, mT + 20);
+        path('td', '#3182ce'); // dewpoint: page accent
+        path('t', '#c05621');  // temperature: warm contrast
+        c.fillStyle = '#c05621'; c.fillText('Temp', w - mR - 30, mT + 8);
+        c.fillStyle = '#3182ce'; c.fillText('Dewpt', w - mR - 34, mT + 20);
     }
 
     function computeStats(prof) {
@@ -924,7 +923,7 @@
     function fillStats(s, source, st, date, hour) {
         $id('psSrc').textContent = source;
         $id('psSrcWrap').classList.toggle('synth', source !== 'LIVE');
-        $id('pipeSrc').textContent = source === 'LIVE' ? 'RAOB LIVE' : 'SYNTH FALLBACK';
+        $id('pipeSrc').textContent = source === 'LIVE' ? 'Live data' : 'Synthetic fallback';
         $id('psSt').textContent = st.icao;
         $id('psTime').textContent = date + ' ' + String(hour).padStart(2, '0') + 'Z';
         $id('psN').textContent = s.n;
@@ -939,32 +938,32 @@
         pipeBusy = true;
         resetStages();
         ensureStations();
-        setStage('station', 'active'); log('RESOLVING STATION...');
+        setStage('station', 'active'); log('Resolving station…');
         const st = resolveStation();
-        if (!st) { setStage('station', 'fail'); log('NO STATION SELECTED', 'err'); pipeBusy = false; return; }
-        setStage('station', 'ok'); log('STATION ' + st.icao + ' · ' + st.label, 'ok');
+        if (!st) { setStage('station', 'fail'); log('No station selected', 'err'); pipeBusy = false; return; }
+        setStage('station', 'ok'); log('Station ' + st.icao + ' · ' + st.label, 'ok');
         const date = $id('datePicker').value || '2025-06-15';
         const hour = +($id('hourSelector').value || 12);
-        setStage('uplink', 'active'); log('UPLINK mesonet.agron.iastate.edu ...');
+        setStage('uplink', 'active'); log('Contacting mesonet.agron.iastate.edu…');
         let prof, source = 'LIVE';
         try {
             prof = await fetchLive(st.icao, date, hour);
-            setStage('uplink', 'ok'); log('UPLINK OK · ' + prof.length + ' LEVELS RECEIVED', 'ok');
+            setStage('uplink', 'ok'); log('Uplink ok · ' + prof.length + ' levels received', 'ok');
             if (userTriggered) SFX.ok();
         } catch (err) {
             source = 'SYNTH'; setStage('uplink', 'fail');
-            log('UPLINK FAILED (' + (err.message || 'TIMEOUT') + ') → SYNTH FALLBACK', 'warn');
+            log('Uplink failed (' + (err.message || 'timeout') + ') → using the synthetic profile', 'warn');
             prof = synthProfile(st.icao + date + hour, hour);
             if (userTriggered) SFX.error();
         }
         if (document.body.classList.contains('sim-active')) { pipeBusy = false; return; }
         setStage('parse', 'active'); await wait(140);
-        setStage('parse', 'ok'); log('PARSE COMPLETE · ' + prof.length + ' VALID LEVELS', 'ok');
+        setStage('parse', 'ok'); log('Parse complete · ' + prof.length + ' valid levels', 'ok');
         setStage('profile', 'active'); await wait(90);
         lastProf = prof;
         renderSkewT(prof);
         fillStats(computeStats(prof), source, st, date, hour);
-        setStage('profile', 'ok'); log('PROFILE RENDERED · SOURCE ' + source, source === 'LIVE' ? 'ok' : 'warn');
+        setStage('profile', 'ok'); log('Profile rendered · source: ' + (source === 'LIVE' ? 'live' : 'synthetic'), source === 'LIVE' ? 'ok' : 'warn');
         pipeBusy = false;
     }
 
