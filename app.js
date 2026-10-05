@@ -4251,7 +4251,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     datGui.add(guiControls, 'paused').onChange(handlePause).name('Paused').listen();
     datGui.add(guiControls, 'download').name('Save Simulation to File');
 
-    datGui.width = 400;
+    datGui.width = 230;
   }
 
   // guiControls.paused = true; // pause before first iteration for debugging
