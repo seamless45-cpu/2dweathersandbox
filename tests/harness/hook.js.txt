@@ -128,4 +128,12 @@
       return out;
     },
     renderFpsProbe(frames) { return new Promise(resolve => { let n = 0; const t0 = performance.now(); const tick = () => { if (++n >= frames) resolve(1000 * frames / (performance.now() - t0)); else requestAnimationFrame(tick); }; requestAnimationFrame(tick); }); },
+    // snap the camera, so a screenshot can be taken at a realistic zoom instead of the
+    // default "whole simulation" view where every tree is three pixels wide
+    setCamera(x, y, zoom) {
+      cam.setPosition(x, y, zoom);
+      cam.curXposLin = x;
+      return { x : cam.viewX, y : cam.viewY, zoom : cam.curZoom };
+    },
+    get camera() { return { x : cam.viewX, y : cam.viewY, zoom : cam.curZoom }; },
   };

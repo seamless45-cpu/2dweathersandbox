@@ -72,7 +72,11 @@ vec3 onLight; // extra light that lights up objects, just like sunlight and shad
 
 
 const vec3 bareDrySoilCol = pow(vec3(0.85, 0.60, 0.40), vec3(GAMMA));
-const vec3 bareWetSoilCol = pow(vec3(0.5, 0.2, 0.1), vec3(GAMMA));
+// Wet earth is dark, and it is dark *brown*. This used to be vec3(0.5, 0.2, 0.1), which is a
+// saturated red: every freshly watered surface cell turned that colour, and because only the
+// top few cells of a wall are ever visible it drew a hard red stroke along the top of the whole
+// landscape. Wet soil also keeps some of the dry colour instead of snapping to one flat value.
+const vec3 bareWetSoilCol = pow(vec3(0.36, 0.25, 0.17), vec3(GAMMA));
 const vec3 greenGrassCol = pow(vec3(0.0, 0.7, 0.2), vec3(GAMMA));
 const vec3 dryGrassCol = pow(vec3(0.843, 0.588, 0.294), vec3(GAMMA));
 
@@ -88,22 +92,98 @@ vec4 surfaceTexture(int index, vec2 pos)
 }
 
 
+// Two octaves of value noise from the noise texture, used for surface detail instead of a
+// single sample. One sample of a smooth texture just dims the whole surface evenly, which is
+// what made the terrain look like flat putty; a real ground surface needs detail that goes both
+// darker and lighter than its base colour.
+//
+// The noise texture is mipmapped, and at the frequencies this is sampled at the driver picks a
+// high mip level and hands back the average colour, i.e. no detail at all. The LOD is therefore
+// pinned: a blurred octave for the large patchiness, a sharp one for the grain.
+vec3 surfaceDetail(vec2 coord, float scale)
+{
+  vec2 p = coord * scale;
+  vec3 patches = textureLod(noiseTex, p, 2.0).rgb;
+  vec3 grain = textureLod(noiseTex, p * 3.1 + vec2(0.37, 0.11), 0.0).rgb;
+  return mix(patches, grain, 0.40);
+}
+
+// How steep the ground is here, in cells of rise per cell across. Read straight out of the
+// distance field: VERT_DISTANCE is how far the surface is above this column, so the difference
+// between the two neighbouring columns is the local gradient of the surface.
+float getSurfaceSlope()
+{
+  ivec4 wallLeft = texture(wallTex, texCoordXmY0);
+  ivec4 wallRight = texture(wallTex, texCoordXpY0);
+
+  float heightLeft = float(-wallLeft[VERT_DISTANCE]) + 1.0;
+  float heightRight = float(-wallRight[VERT_DISTANCE]) + 1.0;
+
+  return clamp(abs(heightRight - heightLeft) * 0.5, 0.0, 1.0);
+}
+
 vec3 getWallColor(float depth)
 {
-  vec3 vegetationCol = mix(greenGrassCol, dryGrassCol, max(1.0 - water[SOIL_MOISTURE] * (1. / fullGreenSoilMoisture), 0.)); // green to brown
+  vec2 surfaceCoord = vec2(texCoord.x * resolution.x, texCoord.y * resolution.y);
 
-  vec3 bareSoilCol = mix(bareDrySoilCol, bareWetSoilCol, map_rangeC(water[SOIL_MOISTURE], 0.0, 20.0, 0.0, 1.0));
+  // How much vegetation is actually growing here, and how healthy it is. The old code mixed
+  // green and brown with a single soil moisture term and then covered it with a noise texture,
+  // so a dry surface and a vegetated one ended up almost the same colour and the vegetation
+  // brush was invisible in the render.
+  float vegAmount = clamp(float(wall[VEGETATION]) / 60.0, 0.0, 1.0);
+  float moisture = clamp(water[SOIL_MOISTURE] / fullGreenSoilMoisture, 0.0, 1.0);
+  float lushness = vegAmount * smoothstep(0.05, 0.55, moisture);
 
-  vec3 surfCol = mix(bareSoilCol, vegetationCol, min(float(wall[VEGETATION]) / 50., 1.));
+  // grass goes from deep green while there is water to straw when the soil dries out
+  const vec3 lushGrassCol = pow(vec3(0.10, 0.42, 0.12), vec3(GAMMA));
+  const vec3 parchedGrassCol = pow(vec3(0.66, 0.55, 0.26), vec3(GAMMA));
+  vec3 vegetationCol = mix(parchedGrassCol, lushGrassCol, smoothstep(0.0, 0.8, moisture));
 
-  const vec3 rockCol = vec3(0.70);                                 // gray rock
+  vec3 bareSoilCol = mix(bareDrySoilCol, bareWetSoilCol, map_rangeC(water[SOIL_MOISTURE], 0.0, 40.0, 0.0, 1.0));
 
-  vec3 color = mix(surfCol, rockCol, clamp(depth * 0.35, 0., 1.)); // * 0.15
+  vec3 surfCol = mix(bareSoilCol, vegetationCol, lushness);
 
+  // Bedrock. The old code mixed towards a flat grey with `depth * 0.35`, and because only the
+  // top few cells of a wall are ever visible that turned the whole landscape into a grey putty
+  // blob: the entire surface, flat ground included, was painted as rock. Rock is actually
+  // exposed where the ground is too steep to hold soil, and deep inside the wall where there is
+  // no soil left at all.
+  float slope = getSurfaceSlope();
+  // the depth ramp is deliberately long, and the slope term fades out with depth: the surface
+  // height is horizontally interpolated across each cell to draw the 45 degree slopes, and next
+  // to a cliff that interpolation makes the depth differ by a whole cell between neighbouring
+  // columns. A short ramp turned that into a light vertical stripe running down the whole wall.
+  // Slope describes the face of the cliff, not the rock in the middle of the hill behind it, and
+  // a depth ramp short enough to see turns the height of every hill into a tonal band.
+  // Only a real cliff exposes its rock. The surface gradient is measured in cells of rise per
+  // cell across, so a gently sloping hill is around 0.25 and a 45 degree face is 0.5; anything
+  // below about half a cell of rise per cell is still ground that can hold soil. Treating every
+  // slope as bare rock painted a pale streak down the flank of every hill, which looked like a
+  // lighting bug rather than like stone.
+  float cliff = smoothstep(0.5, 0.95, slope);
+  float bedrock = clamp(max(cliff * 0.7 * (1.0 - smoothstep(0.5, 6.0, depth)), smoothstep(10.0, 50.0, depth) * 0.6), 0.0, 1.0);
 
-  color *= texture(noiseTex, vec2(texCoord.x * resolution.x, texCoord.y * resolution.y) * 0.2).rgb;                                   // add noise texture
+  // rock is not a flat grey: it is darker in the cracks and warmer where the light reaches it
+  const vec3 rockCol = pow(vec3(0.42, 0.38, 0.34), vec3(GAMMA));
+  const vec3 rockLitCol = pow(vec3(0.58, 0.53, 0.46), vec3(GAMMA));
+  vec3 bedrockCol = mix(rockCol, rockLitCol, surfaceDetail(surfaceCoord, 0.06).r);
+  bedrockCol *= 0.65 + 0.7 * surfaceDetail(surfaceCoord, 0.17).g; // strata and cracks
 
-  color = mix(color, vec3(1.0), clamp(min(water[SNOW], fullWhiteSnowHeight) / fullWhiteSnowHeight - max(depth * 0.3, 0.), 0.0, 1.0)); // mix in white for snow cover
+  vec3 color = mix(surfCol, bedrockCol, bedrock);
+
+  // Multi-scale detail on the surface: patches of different ground cover, plus fine grain. The
+  // scales are in cells per tile, so 0.05 is a patch about 20 cells across and 0.16 is grain
+  // about 6 cells across, which is the range the mipmapped noise texture can still show.
+  color *= mix(1.0, 0.45 + 1.1 * surfaceDetail(surfaceCoord, 0.16).g, 0.50 * (1.0 - bedrock));
+  color *= mix(1.0, 0.55 + 0.9 * surfaceDetail(surfaceCoord * 0.3, 0.05).b, 0.45);
+
+  // soil that has never been wet is bleached, so it is less saturated than fresh soil
+  color = mix(vec3(dot(color, vec3(0.33, 0.42, 0.25))), color, 0.75 + 0.25 * smoothstep(0.0, 12.0, water[SOIL_MOISTURE]));
+
+  // Snow cover, with the faint blue shadow tint snow actually has instead of pure white.
+  const vec3 snowCol = pow(vec3(0.86, 0.89, 0.96), vec3(GAMMA));
+  float snowCover = clamp(min(water[SNOW], fullWhiteSnowHeight) / fullWhiteSnowHeight - max(depth * 0.3, 0.0), 0.0, 1.0);
+  color = mix(color, snowCol * mix(0.82, 1.0, surfaceDetail(surfaceCoord, 0.12).r), snowCover);
 
   return color;
 }
@@ -338,6 +418,15 @@ void main()
 
     ivec4 wallXmY0 = texture(wallTex, texCoordXmY0);
     ivec4 wallXpY0 = texture(wallTex, texCoordXpY0);
+    ivec4 wallX0Ym = texture(wallTex, texCoordX0Ym);
+
+    // A wall is decided one cell at a time, so the silhouette against the sky is a staircase of
+    // cell sized steps and the landscape looks like it is built out of blocks. The display is
+    // alpha blended over the sky, so fading the top of the open surface column into the sky
+    // over a fraction of a cell antialiases the step without changing the simulation data.
+    if (wallX0Ym[DISTANCE] != 0) {          // the cell above is open: this is a surface cell
+      opacity = min(opacity, 1.0 - smoothstep(0.55, 1.0, fract(fragCoord.y)));
+    }
 
     switch (wall[TYPE]) {
       // case WALLTYPE_INERT:
@@ -409,7 +498,45 @@ void main()
         opacity = airColor.a;
         color = airColor.rgb;
       } else {
-        color = vec3(0, 0.5, 1.0); // water
+        // ── water body ────────────────────────────────────────────────────────────
+        // Was a flat vec3(0, 0.5, 1.0) for every water pixel, which is why the sea read as a
+        // sheet of blue paper. What makes water look like water is that its colour depends on
+        // how far the light has to travel through it: near the surface, light that scattered in
+        // the upper layer of the water is still on its way to the eye, so the water is a
+        // luminous blue-green; deeper down everything except the long wavelengths is already
+        // scattered away and what is left is nearly black.
+        float depthBelowSurface = max(-float(wall[VERT_DISTANCE]) - (waterLevel - fract(fragCoord.y)), 0.0); // cells below the water line
+
+        // Beer-Lambert style falloff of the scattered light with depth
+        float shallow = exp(-depthBelowSurface * 0.55);
+
+        const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA)); // turquoise, lit from above
+        const vec3 deepCol = pow(vec3(0.03, 0.09, 0.20), vec3(GAMMA));    // blue, light already scattered out
+        const vec3 sandCol = pow(vec3(0.55, 0.48, 0.36), vec3(GAMMA));   // the lit bottom, seen through very shallow water
+
+        color = mix(deepCol, shallowCol, shallow);
+
+        // The bottom shows through only in the last fraction of a cell. One cell is 120 m
+        // across, so even the two cell deep sea at the bottom of the screen is deep water, and
+        // letting the sea floor tint it through the whole column turned the ocean olive.
+        float seeThrough = smoothstep(0.55, 0.0, depthBelowSurface) * 0.35;
+        color = mix(color, sandCol * (0.5 + 0.7 * shallow), seeThrough);
+
+        // ── surface ───────────────────────────────────────────────────────────────
+        // A specular highlight from the wave signal, the way sunlight glints off a rippled
+        // surface. The wave derivative gives the slope of the surface, which is what decides
+        // where the reflection of the sun lands.
+        float waveSlope = cos(fragCoord.x * freqs[0] + iterNum * speeds[0] + phases[0]) * amps[0] * freqs[0];
+        float ripple = 0.5 + 0.5 * sin(fragCoord.x * freqs[2] - iterNum * speeds[2] + phases[2]);
+        float glint = pow(clamp(1.0 - abs(waveSlope) * 0.3 - (1.0 - ripple) * 0.2, 0.0, 1.0), 4.0);
+
+        // only the very top of the water column gets the reflection of the sky
+        float surfaceBand = smoothstep(0.30, 0.0, waterLevel - fract(fragCoord.y));
+        color += vec3(0.90, 0.95, 1.0) * glint * surfaceBand * 0.45 * clamp(lightIntensity, 0.0, 2.0);
+
+        // foam where the water meets the ground, and on the crests of the waves
+        float shoreFoam = smoothstep(0.45, 0.0, depthBelowSurface);
+        color = mix(color, vec3(0.80, 0.88, 0.92) * (0.45 + 0.55 * ripple), shoreFoam * 0.30);
       }
 
       // draw 45° slopes under water
@@ -550,6 +677,13 @@ void main()
         treeTexCoordY *= 0.72;                              // Trees only go up to 72% of the texture height
         treeTexCoordY = 1. - treeTexCoordY;                 // texture is upside down
 
+        // The five sub textures are stacked in one image, and each of them only fills the upper
+        // half of its own fifth. surfaceTexture() maps 0..1 onto the whole fifth, so a full
+        // height tree reached past the artwork into the transparent gap above it and came back
+        // with an alpha of 0: the canopies were never drawn at all. Rescale into the half that
+        // actually has trees in it.
+        treeTexCoordY = 0.5 + 0.5 * treeTexCoordY;
+
         vec4 texCol;
         if (wallX0Ym[TYPE] == WALLTYPE_LAND || wallX0Ym[TYPE] == WALLTYPE_URBAN) { // land below
           vec4 surfaceWater = texture(waterTex, texCoordX0Ym);                     // snow on land below
@@ -557,9 +691,18 @@ void main()
           if (snow * 0.01 / cellHeight > heightAboveGround)
             texCol = vec4(vec3(1.), 1.);                                                                                                                          // show white snow layer above ground
           else {                                                                                                                                                  // display vegetation
-            vec4 treeColor = surfaceTexture(FOREST, vec2(treeTexCoordX, treeTexCoordY));
-            vec4 vegetationCol = mix(treeColor, vec4(dryGrassCol, 1.), max(0.5 - surfaceWater[SOIL_MOISTURE] * (0.5 / fullGreenSoilMoisture), 0.) * treeColor.a); // green to brown
-            texCol = mix(vegetationCol, surfaceTexture(SNOW_FOREST, vec2(treeTexCoordX, treeTexCoordY)), min(snow / fullWhiteSnowHeight, 1.0));
+          vec4 treeColor = surfaceTexture(FOREST, vec2(treeTexCoordX, treeTexCoordY));
+          // How much of the green has gone out of the canopy as the soil dries. The old
+          // expression mixed a saturated orange in at a flat 0.5 even for damp ground, which is
+          // what drew the hard red-brown stroke along the top of the terrain: a row of trees
+          // tinted with one flat colour instead of a canopy that changes with the season.
+          const vec3 parchedCanopyCol = pow(vec3(0.52, 0.50, 0.34), vec3(GAMMA));
+          float parched = map_rangeC(surfaceWater[SOIL_MOISTURE], 4.0, 40.0, 0.85, 0.0) * treeColor.a;
+          vec4 vegetationCol = mix(treeColor, vec4(parchedCanopyCol, 1.), parched);
+          // the underside of a canopy is in its own shadow, so it is darker than the ground
+          // around it; without this the trees read as a row of bright blocks stuck on top
+          vegetationCol.rgb *= mix(0.70, 1.0, clamp(localY / max(treeTexHeightNorm, 0.001), 0.0, 1.0));
+          texCol = mix(vegetationCol, surfaceTexture(SNOW_FOREST, vec2(treeTexCoordX, treeTexCoordY)), min(snow / fullWhiteSnowHeight, 1.0));
           }
         } else if (wallX0Ym[TYPE] == WALLTYPE_FIRE) {
           texCol = surfaceTexture(FIRE_FOREST, vec2(treeTexCoordX, treeTexCoordY));

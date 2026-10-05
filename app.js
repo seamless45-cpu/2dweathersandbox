@@ -7135,6 +7135,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'sunAngle'), solarZenithAngle);
     gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'minShadowLight'), minShadowLight);
     gl.useProgram(skyBackgroundDisplayProgram);
+    gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'sunAngle'), solarZenithAngle);
     gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'minShadowLight'), minShadowLight);
 
     if (guiControls.dayNightCycle)
