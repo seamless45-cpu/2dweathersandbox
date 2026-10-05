@@ -24,7 +24,8 @@ await page.goto(URL, { waitUntil : 'networkidle2', timeout : 120000 });
 await page.evaluate(([ nx, ny ]) => {
   document.getElementById('simResSelX').value = String(nx);
   document.getElementById('simResSelY').value = String(ny);
-  document.querySelector('input[value="▶ CREATE NEW SIMULATION"]').click();
+  // the button label has changed over time; find it by what it does
+  document.querySelector('input[type="button"][onclick*="loadData"], button[onclick*="loadData"]').click();
 }, [ NX, NY ]);
 await page.waitForFunction(() => window.__sim && window.__sim.SETUP_MODE === true, { timeout : 300000 });
 await page.evaluate(() => { window.__sim.startSimulation(); });

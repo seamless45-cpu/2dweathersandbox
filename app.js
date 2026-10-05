@@ -527,8 +527,6 @@ const NUM_DROPLETS_DEVIDER = 25; // 25
 
 let hdrFBO;
 
-let bloomFBOs = [];
-
 let ambientLightFBOs = [];
 let emittedLightFBO;
 
@@ -893,26 +891,6 @@ class FBO // wraps texture, frambuffer and info in one
 }
 
 function createHdrFBO() { hdrFBO = new FBO(canvas.width, canvas.height, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR); }
-
-function createBloomFBOs()
-{
-  let res = new Vec2D(canvas.width, canvas.height);
-
-  bloomFBOs.length = 0;           // empty array
-  for (let i = 0; i < 100; i++) { // max bloom iterations
-    let width = res.x >> i;       // right shift to devide by 2 multiple times
-    let height = res.y >> i;
-
-    //  console.log('BloomFBO', i, width, height)
-
-    if (width < 2 || height < 2)
-      break; // stop when texture resolution is 2 x 2
-
-    let fbo = new FBO(width, height, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
-    bloomFBOs.push(fbo);
-  }
-}
-
 
 function createAmbientLightFBOs()
 {
@@ -4612,8 +4590,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     soundingGraph.graphCanvas.width = window.innerHeight;
 
     // Render output framebuffers need to match canvas resolution
-    createBloomFBOs(); // recreate bloom framebuffers
-    createHdrFBO();    // recreate hdr framebuffer
+    createHdrFBO(); // recreate hdr framebuffer
   });
 
   function logSample()
@@ -5139,8 +5116,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const IRtempDisplayShader = await loadShader('IRtempDisplayShader.frag');
 
   const postProcessingShader = await loadShader('postProcessingShader.frag');
-  const isolateBrightPartsShader = await loadShader('isolateBrightPartsShader.frag');
-  const bloomBlurShader = await loadShader('bloomBlurShader.frag');
+  // blur used to spread the emitted light for the ambient light term (it was also used for the
+  // screen bloom, which is gone)
+  const lightBlurShader = await loadShader('bloomBlurShader.frag');
 
 
   // create programs
@@ -5167,9 +5145,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const IRtempDisplayProgram = createProgram(dispVertexShader, IRtempDisplayShader);
 
   const postProcessingProgram = createProgram(postProcessingVertexShader, postProcessingShader);
-  const isolateBrightPartsProgram = createProgram(postProcessingVertexShader, isolateBrightPartsShader);
-  const bloomBlurProgram = createProgram(postProcessingVertexShader, bloomBlurShader);
-  // const lightBlurProgram = createProgram(postProcessingVertexShader, bloomBlurShader);
+  const lightBlurProgram = createProgram(postProcessingVertexShader, lightBlurShader);
 
 
   await loadingBar.set(80, 'Setting up textures');
@@ -5984,8 +5960,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   createHdrFBO();
 
-  createBloomFBOs();
-
   var texelSizeX = 1.0 / sim_res_x;
   var texelSizeY = 1.0 / sim_res_y;
 
@@ -6230,11 +6204,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   gl.useProgram(postProcessingProgram);
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'hdrTex'), 0);
-  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex'), 1);
-
-
-  gl.useProgram(isolateBrightPartsProgram);
-  gl.uniform1i(gl.getUniformLocation(isolateBrightPartsProgram, 'hdrTex'), 0);
 
   gl.useProgram(lightningLocationProgram);
   gl.uniform1i(gl.getUniformLocation(lightningLocationProgram, 'precipFeedbackTex'), 0);
@@ -6729,15 +6698,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         let prevFBO = emittedLightFBO; // the previous FBO
 
-        gl.useProgram(bloomBlurProgram);
-        gl.uniform1i(gl.getUniformLocation(bloomBlurProgram, 'bloomTexture'), 0);
+        gl.useProgram(lightBlurProgram);
+        gl.uniform1i(gl.getUniformLocation(lightBlurProgram, 'inputTexture'), 0);
 
-        for (let blurTimes = 0; blurTimes < 2; blurTimes++) { // blur twice for smoother result
+        for (let blurTimes = 0; blurTimes < 1; blurTimes++) { // one pass is enough: the mip chain already spreads the light over the whole screen, the second pass only repeated the cost
 
           // downsample
           for (let i = 1; i < ambientLightFBOs.length; i++) {
             let destFBO = ambientLightFBOs[i];
-            gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
+            gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
 
             gl.viewport(0, 0, destFBO.width, destFBO.height);
 
@@ -6759,7 +6728,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           for (let i = ambientLightFBOs.length - 2; i >= 0; i--) {
             let destFBO = ambientLightFBOs[i];
 
-            gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
+            gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
@@ -6854,80 +6823,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       gl.disable(gl.BLEND);
 
-      // Post processing:
+      // Post processing: tone map the HDR frame straight to the canvas. This used to be a
+      // bright-extraction pass plus a full multi-level blur chain, whose result was added back
+      // over the frame; with the bloom gone it is a single full screen pass.
 
       gl.bindVertexArray(postProcessingVao);
-
-
-      gl.useProgram(isolateBrightPartsProgram);
-
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFBOs[0].frameBuffer); // brightPartsFrameBuffer
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0.0, 0.0, 0.0, 1.0);                            // background color
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // render bright parts to seperate texture
-
-
-      // BLOOM
-
-      let prevFBO = bloomFBOs[0]; // the previous FBO
-
-      gl.useProgram(bloomBlurProgram);
-      gl.uniform1i(gl.getUniformLocation(bloomBlurProgram, 'bloomTexture'), 0);
-
-
-      // downsample
-      for (let i = 1; i < bloomFBOs.length; i++) {
-        let destFBO = bloomFBOs[i];
-        gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
-
-        gl.viewport(0, 0, destFBO.width, destFBO.height);
-
-        // bind texture
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, destFBO.frameBuffer);
-        // gl.drawBuffers([ gl.BACK ]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // draw to destFBO
-
-        prevFBO = destFBO;
-      }
-
-      // upsample and add
-      gl.blendFunc(gl.ONE, gl.ONE); // add to the existing texture in the framebuffer
-      gl.enable(gl.BLEND);
-
-      for (let i = bloomFBOs.length - 2; i >= 0; i--) {
-        let destFBO = bloomFBOs[i];
-
-        gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
-
-        gl.viewport(0, 0, destFBO.width, destFBO.height);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, destFBO.frameBuffer);
-        // gl.drawBuffers([ gl.BACK ]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // draw to destFBO
-
-        prevFBO = destFBO;
-      }
-
-      gl.disable(gl.BLEND);
 
       gl.useProgram(postProcessingProgram);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, bloomFBOs[0].texture);
-
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
       if (SETUP_MODE) {
         gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'exposure'), 50.0);

@@ -16,7 +16,6 @@ uniform vec2 texelSize;
 uniform float exposure;
 
 uniform sampler2D hdrTex;
-uniform sampler2D bloomTex;
 out vec4 fragmentColor;
 
 
@@ -51,13 +50,11 @@ float interleavedGradientNoise(vec2 pixel)
 
 void main()
 {
+  // No bloom pass any more: the screen-wide blur was adding a large, blurred copy of the bright
+  // parts of the frame on top of everything (the bright-extraction ramp was about fifty times
+  // stronger than the one it replaced), which is what made the image both washed out and soft.
+  // The scene is rendered straight into a linear HDR buffer and tone mapped here.
   vec3 outputCol = texture(hdrTex, texCoord).rgb;
-
-  vec3 bloom = texture(bloomTex, texCoord).rgb;
-
-  // Bloom: blend in the bright glow. Slightly stronger than before for more
-  // cinematic feel, but still restrained so it doesn't wash out the image.
-  outputCol += bloom * 0.35;
 
   outputCol *= exposure;
 
@@ -67,12 +64,13 @@ void main()
   // 2. gamma correction
   outputCol = pow(outputCol, ONE_OVER_GAMMA);
 
-  // 3. gentle S-curve for contrast
-  outputCol = mix(outputCol, outputCol * outputCol * (3.0 - 2.0 * outputCol), 0.22);
+  // 3. gentle S-curve for contrast. Kept subtle: it lifts everything above middle grey, and a
+  //    strong curve was part of why the daylight image read as overexposed.
+  outputCol = mix(outputCol, outputCol * outputCol * (3.0 - 2.0 * outputCol), 0.12);
 
-  // 4. saturation boost: give back saturation the tone curve removes from bright areas
+  // 4. saturation: a small boost to offset what the tone curve takes out of bright areas
   float luma = dot(outputCol, vec3(0.2126, 0.7152, 0.0722));
-  outputCol = clamp(mix(vec3(luma), outputCol, 1.18), 0.0, 1.0);
+  outputCol = clamp(mix(vec3(luma), outputCol, 1.10), 0.0, 1.0);
 
   // 5. subtle vignette: darken the edges to draw focus to the center.
   // Uses squared distance to avoid the sqrt() in length() for performance.

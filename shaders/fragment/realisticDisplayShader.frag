@@ -153,35 +153,35 @@ vec3 getWallColor(float depth)
 
   vec3 color = mix(surfCol, bedrockCol, bedrock);
 
-  // Multi-scale surface detail: patches of ground cover plus fine grain.
-  color *= mix(1.0, 0.45 + 1.1 * surfaceDetail(surfaceCoord, 0.16).g, 0.50 * (1.0 - bedrock));
-  color *= mix(1.0, 0.55 + 0.9 * surfaceDetail(surfaceCoord * 0.3, 0.05).b, 0.45);
+  // Multi-scale surface detail: patches of ground cover plus fine grain. The strength is
+  // deliberately moderate: at full weight the cell-scale grain of the noise texture turns the
+  // hillside into speckle, and it was part of what read as "blurry" at normal zoom.
+  color *= mix(1.0, 0.55 + 0.90 * surfaceDetail(surfaceCoord, 0.16).g, 0.38 * (1.0 - bedrock));
+  color *= mix(1.0, 0.62 + 0.76 * surfaceDetail(surfaceCoord * 0.3, 0.05).b, 0.32);
 
   // soil that has never been wet is bleached, so it is less saturated than fresh soil
   color = mix(vec3(dot(color, vec3(0.33, 0.42, 0.25))), color, 0.75 + 0.25 * smoothstep(0.0, 12.0, water[SOIL_MOISTURE]));
 
-  // ── surface normal shading ───────────────────────────────────────────────
-  // Approximate a surface normal from the height field and use it to modulate
-  // the surface colour with a simple Lambertian term. This gives the terrain
-  // real shading instead of looking like a flat colouring-book fill.
-  ivec4 wallLeft = texture(wallTex, texCoordXmY0);
-  ivec4 wallRight = texture(wallTex, texCoordXpY0);
+  // ── relief shading ───────────────────────────────────────────────────────
+  // Approximate a surface normal from the height field and use it to modulate the surface colour
+  // with a Lambertian term, the way relief shading works on a topographic map.
+  //
+  // The baseline is two cells, not one: the height field is a staircase of whole cells, so a
+  // one cell baseline sees a full cell of rise on a smooth 45 degree slope and nothing on a flat
+  // stretch, and the brightness then alternates column by column (vertical stripes down every
+  // hillside). Two cells halve that quantisation, and the weight is kept low so what is left of
+  // it stays gentle.
+  ivec4 wallLeft = texture(wallTex, texCoordXmY0 - vec2(texelSize.x, 0.0));
+  ivec4 wallRight = texture(wallTex, texCoordXpY0 + vec2(texelSize.x, 0.0));
   float hL = float(-wallLeft[VERT_DISTANCE]) + 1.0;
   float hR = float(-wallRight[VERT_DISTANCE]) + 1.0;
   // Surface normal: X component from the height difference, Y = 1 (facing up)
-  vec2 surfNormal2D = normalize(vec2(-(hR - hL) * 0.5, 1.0));
+  vec2 surfNormal2D = normalize(vec2(-(hR - hL) * 0.25, 1.0));
   // Sun direction in the 2D side view: x = sin(sunAngle), y = cos(sunAngle)
   float sunDot = max(dot(surfNormal2D, vec2(sin(sunAngle), cos(sunAngle))), 0.0);
-  // Mix a gentle Lambertian term (0.35 ambient + 0.65 directional) into the surface
-  float surfaceLighting = 0.35 + 0.65 * sunDot;
-  color *= mix(1.0, surfaceLighting, 0.45 * (1.0 - bedrock));
-
-  // ── ambient occlusion approximation ──────────────────────────────────────
-  // Cells surrounded by taller neighbours are in shadow. Using the distance
-  // field, the closer a surface cell is to a wall, the more occluded it is.
-  float aoNeighbourhood = max(float(wall[DISTANCE]), 1.0);
-  float ao = clamp(1.0 - 0.12 / aoNeighbourhood, 0.6, 1.0);
-  color *= ao;
+  // Gentle Lambertian term (0.45 ambient + 0.55 directional) mixed into the surface
+  float surfaceLighting = 0.45 + 0.55 * sunDot;
+  color *= mix(1.0, surfaceLighting, 0.30 * (1.0 - bedrock));
 
   // Snow cover, with the faint blue shadow tint snow actually has.
   const vec3 snowCol = pow(vec3(0.86, 0.89, 0.96), vec3(GAMMA));
@@ -333,33 +333,35 @@ vec4 getAirColor(vec2 fragCoordIn)
 
   float cloudwater = water[CLOUD];
 
-  // ── volumetric cloud shading ─────────────────────────────────────────────
-  // Real clouds have bright tops (lit from above by the sun) and darker bases
-  // (shadowed from below). We approximate this with the height in the sim:
-  // the higher the cloud cell, the more sunlit it is. The base is tinted
-  // with a cool grey-blue to mimic the shadow of the cloud above it.
+  // ── cloud shading ────────────────────────────────────────────────────────
+  // How brightly a cloud is lit depends on how much sunlight actually reaches that cell:
+  // lightIntensity is the sunlight the simulation has left after the cloud above has absorbed
+  // and reflected its share, so tops come out bright and thick bases come out grey.
+  //
+  // This used to be driven by the screen height (texCoord.y) instead, which is not a property of
+  // the cloud at all: every cloud pixel sits in the upper part of the screen, so every cloud was
+  // painted the same near-white whatever its thickness, and the whole sky turned milky.
   float cloudDensity = max(cloudwater * 13.6, 0.0);
   float totalDensity = cloudDensity + water[PRECIPITATION] * 0.8; // visualize precipitation
 
   float cloudOpacity = clamp(1.0 - (1.0 / (1. + totalDensity)), 0.0, 1.0);
 
-  // Height-dependent lighting: top of the cloud column is bright, bottom is shadowed
-  float cloudHeightFrac = clamp(texCoord.y, 0.0, 1.0);
-  // Sun-lit top: warm white, dark base: cool blue-grey
-  const vec3 cloudTopCol = vec3(1.0, 0.98, 0.96);
-  const vec3 cloudBaseCol = vec3(0.42, 0.47, 0.55); // pre-gamma-corrected
-  // Simple linear blend based on height; cheaper than double smoothstep
-  float cloudLitFactor = cloudHeightFrac;
+  float cloudLitFactor = clamp(0.25 + 0.90 * lightIntensity, 0.0, 1.0);
+  const vec3 cloudTopCol = vec3(0.88, 0.90, 0.94);
+  const vec3 cloudBaseCol = vec3(0.34, 0.38, 0.46); // pre-gamma-corrected
   vec3 cloudCol = mix(cloudBaseCol, cloudTopCol, cloudLitFactor);
+
+  // Dense cloud bodies are darker than their sunlit tops
+  cloudCol *= mix(1.0, 0.70, clamp(totalDensity * 0.25, 0.0, 1.0));
 
   // Thin clouds at the edges are slightly translucent, showing a bluish tint from scattering
   float cloudThickness = clamp(totalDensity * 0.04, 0.0, 1.0);
-  vec3 cloudEdgeTint = vec3(0.70, 0.78, 0.88);
+  vec3 cloudEdgeTint = vec3(0.55, 0.62, 0.74);
   cloudCol = mix(cloudEdgeTint, cloudCol, cloudThickness);
 
   // Sunset/sunrise: clouds pick up the colour of the sunlight
   float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0.0, 1.0), 0.0, 1.0);
-  cloudCol = mix(cloudCol, cloudCol * sunColor(scatering) * 1.8, scatering * 0.7);
+  cloudCol = mix(cloudCol, cloudCol * sunColor(scatering) * 1.5, scatering * 0.7);
   // Night clouds: very dim, just slightly brighter than the sky
   float night = clamp(map_range(abs(sunAngle), 90. * deg2rad, 100. * deg2rad, 0.0, 1.0), 0.0, 1.0);
   cloudCol *= mix(1.0, 0.08, night);
@@ -469,6 +471,30 @@ void main()
       opacity = min(opacity, 1.0 - smoothstep(0.55, 1.0, fract(fragCoord.y)));
     }
 
+    // Sunlight does not cross the surface: the lighting pass stores the light that reaches a cell
+    // in the air, and inside a wall it stores zero ("all light absorbed by ground", the reflected
+    // part is added to the emitted light that is blurred into the ambient term). Sampling the
+    // light texture at the fragment's own cell therefore gave every terrain pixel below the
+    // surface nothing to be lit by, which is why the ground read as a black silhouette and the
+    // whole scene depended on the screen bloom to be visible at all.
+    //
+    // The sunlight a surface actually receives is the one in the air cell just above it: the
+    // surface of this column is (-wall[VERT_DISTANCE]) + 1 cells up (VERT_DISTANCE is 0 at the
+    // surface and counts downwards, or positive above ground). Water walls store their own light
+    // and are left alone.
+    //
+    // The sample is taken a few cells up rather than at the surface itself. The terrain is a
+    // staircase of whole cells and the sunlight is ray marched, so on a slope lit at a grazing
+    // angle the cell directly above each tread sits in the alternating shadow of the next riser:
+    // sampling there draws a picket fence of bright and dark columns down every hillside.
+    // A few cells higher the staircase pattern has washed out and what is left is the real
+    // shading of the hill.
+    if (wall[TYPE] != WALLTYPE_WATER) {
+      const float surfaceLightSampleHeight = 5.5; // cells above the surface
+      float surfaceLightCoordY = texCoord.y + (float(-wall[VERT_DISTANCE]) + surfaceLightSampleHeight) * texelSize.y;
+      lightIntensity = texture(lightTex, vec2(texCoord.x, clamp(surfaceLightCoordY, 0.0, 1.0)))[0] / standardSunBrightness;
+    }
+
     switch (wall[TYPE]) {
       // case WALLTYPE_INERT:
       //   color = vec3(0, 0, 0);
@@ -558,9 +584,10 @@ void main()
         // light through itself. This makes the horizon band of the sea a
         // mirror of the sky, the way real water looks.
         float viewAngle = clamp(fract(fragCoord.y) - waterLevel + 1.0, 0.0, 1.0);
-        float fresnel = pow(1.0 - viewAngle, 4.0) * 0.55;
-        // The reflected colour is a hint of the sky: pale blue
-        vec3 skyReflectCol = pow(vec3(0.55, 0.68, 0.85), vec3(GAMMA));
+        float fresnel = pow(1.0 - viewAngle, 4.0) * 0.40;
+        // The reflected colour is a hint of the sky, matched to the sky shader's horizon so the
+        // sea does not read as a brighter blue-white sheet than the sky above it
+        vec3 skyReflectCol = pow(vec3(0.47, 0.65, 0.85), vec3(GAMMA));
         color = mix(color, skyReflectCol * clamp(lightIntensity, 0.0, 1.5), fresnel);
 
         // The bottom shows through only in the last fraction of a cell.
@@ -577,7 +604,7 @@ void main()
 
         // only the very top of the water column gets the reflection of the sky
         float surfaceBand = smoothstep(0.25, 0.0, waterLevel - fract(fragCoord.y));
-        color += vec3(0.95, 0.97, 1.0) * glint * surfaceBand * 0.50 * clamp(lightIntensity, 0.0, 2.0);
+        color += vec3(0.95, 0.97, 1.0) * glint * surfaceBand * 0.28 * clamp(lightIntensity, 0.0, 2.0);
 
         // Subtle subsurface scattering: a thin bright band just below the surface
         // where sunlight has scattered through the upper layer of water.
@@ -821,16 +848,19 @@ void main()
   finalLight += vec3(shadowLight) + onLight;
 
   // ── atmospheric perspective (distance fog) ─────────────────────────────────
-  // Distant terrain fades towards the horizon colour for depth. Uses simple
-  // linear falloff based on height in the sim (lower = more atmosphere).
+  // A slight fade towards the horizon colour for depth. This is deliberately weak: at 0.35 it
+  // mixed every surface in the lower half of the screen a third of the way towards a bright
+  // blue-white, which washed out the terrain (and read as blur, since contrast is what the eye
+  // reads as sharpness).
   float fogDistance = clamp(1.0 - texCoord.y, 0.0, 1.0); // more fog near ground
-  float fogFactor = fogDistance * fogDistance * 0.35; // quadratic falloff, cheaper than pow()
+  float fogFactor = fogDistance * fogDistance * 0.12; // quadratic falloff, cheaper than pow()
 
-  // Fog colour follows the sky at the horizon: pale blue during the day, orange at sunset
+  // Fog colour follows the sky at the horizon: pale blue during the day, orange at sunset.
+  // These match the sky shader's horizon colour so fogged terrain still blends into the sky.
   vec3 horizonFogCol;
   {
     float nightFactor = clamp(map_range(abs(sunAngle), 90. * deg2rad, 100. * deg2rad, 0.0, 1.0), 0.0, 1.0);
-    vec3 dayFogCol = pow(vec3(0.60, 0.72, 0.88), vec3(GAMMA));
+    vec3 dayFogCol = pow(vec3(0.49, 0.66, 0.85), vec3(GAMMA));
     vec3 sunsetFogCol = pow(vec3(0.80, 0.50, 0.30), vec3(GAMMA));
     const vec3 nightFogCol = vec3(0.008, 0.012, 0.025); // pre-computed dark blue
     horizonFogCol = mix(dayFogCol, sunsetFogCol, scatering * 0.7);
