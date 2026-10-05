@@ -70,76 +70,149 @@ function mixGeneric(a, b, t, {clamp = false} = {})
 
 const corsUrl = 'https://my-cors-proxy.nielsdaemen747.workers.dev/?url='; // my own proxy worker on cloudfare
 
+// The sounding pages are scraped through a CORS proxy. A single proxy is a single point of
+// failure: when the worker is unreachable the fetch fails, the HTML that comes back (if any)
+// is an error page with no images in it, and the old code then crashed on
+// `img.getAttribute('src')` and left the preview pointing at a broken image. Try the next
+// proxy in the list instead, and only give up when every one of them has failed.
+const corsProxies = [
+  url => corsUrl + encodeURIComponent(url),
+  url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+  url => 'https://corsproxy.io/?url=' + encodeURIComponent(url),
+];
+
+async function fetchThroughCorsProxy(url)
+{
+  let lastError = null;
+
+  for (const buildProxyUrl of corsProxies) {
+    try {
+      const response = await fetch(buildProxyUrl(url));
+
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+
+      const text = await response.text();
+      if (!text || !text.trim().length) throw new Error('empty response');
+
+      return text;
+    } catch (error) {
+      lastError = error;
+      console.warn('Sounding proxy failed, trying the next one:', error);
+    }
+  }
+
+  throw new Error('Could not fetch "' + url + '"' + (lastError ? ' (' + lastError.message + ')' : ''));
+}
+
 async function getSoundingGraphImgUrl(url)
 {
-  try {
-    const response = await fetch(corsUrl + encodeURIComponent(url));
-    const html = await response.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const img = doc.querySelectorAll('img')[0];
-    return 'https://www.meteociel.fr/' + img.getAttribute('src');
-  } catch (error) {
-    console.error('Error fetching the data:', error);
-  }
+  const html = await fetchThroughCorsProxy(url);
+
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  // Not every page has an image, and not every image has a src. Grabbing the first <img>
+  // blindly is what made this throw "Cannot read properties of undefined".
+  const img = Array.from(doc.querySelectorAll('img')).find(el => (el.getAttribute('src') || '').trim().length > 0);
+
+  if (!img) throw new Error('No sounding chart image found on the page');
+
+  const src = img.getAttribute('src').trim();
+
+  // meteociel returns relative paths, but do not mangle an absolute URL if one ever shows up
+  return /^https?:\/\//i.test(src) ? src : 'https://www.meteociel.fr/' + src.replace(/^\/+/, '');
 }
 
 // Function to scrape table data from the given URL
 async function scrapeTableData(url)
 {
-  try {
-    const response = await fetch(corsUrl + encodeURIComponent(url));
-    const html = await response.text();
+  const html = await fetchThroughCorsProxy(url);
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
 
-    // Select the rows of the main table (starting at line 51)
-    const rows = doc.querySelectorAll('table:nth-of-type(2) tr:not(:first-child)');
+  // Select the rows of the main table (starting at line 51)
+  const rows = doc.querySelectorAll('table:nth-of-type(2) tr:not(:first-child)');
 
-    const tableData = [];
+  const tableData = [];
 
-    rows.forEach(row => {
-      const cells = row.querySelectorAll('td');
+  rows.forEach(row => {
+    const cells = row.querySelectorAll('td');
 
-      const rowData = {
-        alt : parseFloat(cells[0].textContent),
-        p : parseFloat(cells[1].textContent),
-        t : parseFloat(cells[2].textContent),
-        tw : parseFloat(cells[3].textContent),
-        td : parseFloat(cells[4].textContent),
-        rh : parseFloat(cells[5].textContent),
-        vel : parseFloat(cells[6].textContent.split(' / ')[1]),
-        angle : parseFloat(cells[6].textContent.split(' / ')[0]),
-      };
+    // Rows that are not data rows (headers, spacers, error pages) do not have all seven
+    // columns; reading textContent off a missing cell threw and killed the whole scrape.
+    if (cells.length < 7) return;
 
-      const hasNaN = Object.values(rowData).some(v => Number.isNaN(v));
+    const rowData = {
+      alt : parseFloat(cells[0].textContent),
+      p : parseFloat(cells[1].textContent),
+      t : parseFloat(cells[2].textContent),
+      tw : parseFloat(cells[3].textContent),
+      td : parseFloat(cells[4].textContent),
+      rh : parseFloat(cells[5].textContent),
+      vel : parseFloat(cells[6].textContent.split(' / ')[1]),
+      angle : parseFloat(cells[6].textContent.split(' / ')[0]),
+    };
 
-      if (!hasNaN) // discard if the row contains any NaN
-        tableData.push(rowData);
-    });
-    return tableData;
+    const hasNaN = Object.values(rowData).some(v => Number.isNaN(v));
 
-  } catch (error) {
-    console.error('Error fetching the data:', error);
-  }
+    if (!hasNaN) // discard if the row contains any NaN
+      tableData.push(rowData);
+  });
+
+  return tableData;
+}
+
+function setSoundingStatus(message, isError)
+{
+  const statusEl = document.getElementById('soundingStatus');
+  if (!statusEl) return;
+
+  statusEl.textContent = message || '';
+  statusEl.hidden = !message;
+  statusEl.classList.toggle('error', !!isError);
 }
 
 async function loadSounding(stationID, timeStamp)
 {
-
   const imgMapType = 1; // 0 = large classic emagram   1 = small emagram
   const graphPageUrl = 'https://www.meteociel.fr/cartes_obs/sondage_display.php?id=' + stationID + '&map=' + imgMapType + '&date=' + timeStamp;
   const tablePageUrl = 'https://www.meteociel.fr/cartes_obs/sondage_display.php?id=' + stationID + '&map=4&date=' + timeStamp;
 
-  const SoundingGraphImgUrl = await getSoundingGraphImgUrl(graphPageUrl);
-
   const soundingImgEl = document.getElementById('soundingPreview');
-  soundingImgEl.src = SoundingGraphImgUrl;
 
-  // console.log(graphPageUrl, SoundingGraphImgUrl, tablePageUrl);
+  setSoundingStatus('Loading sounding data…', false);
 
-  return scrapeTableData(tablePageUrl);
+  const [graphResult, tableResult] = await Promise.allSettled([
+    getSoundingGraphImgUrl(graphPageUrl),
+    scrapeTableData(tablePageUrl),
+  ]);
+
+  if (graphResult.status === 'fulfilled') {
+    soundingImgEl.src = graphResult.value;
+    soundingImgEl.alt = 'Sounding chart for the selected station and time';
+  } else {
+    console.error('Error fetching the sounding chart:', graphResult.reason);
+    soundingImgEl.removeAttribute('src'); // do not leave a broken image behind
+    soundingImgEl.alt = 'Sounding chart unavailable';
+  }
+
+  const soundingTableData = tableResult.status === 'fulfilled' ? tableResult.value : null;
+
+  if (tableResult.status === 'rejected')
+    console.error('Error fetching the sounding table:', tableResult.reason);
+
+  if (soundingTableData && soundingTableData.length > 10) {
+    setSoundingStatus('', false);
+  } else if (graphResult.status === 'fulfilled') {
+    setSoundingStatus('No usable sounding data for this station and time. Try another station or cycle.', true);
+  } else {
+    setSoundingStatus('Could not load the sounding. The data service may be unreachable — try again or pick another station.', true);
+  }
+
+  // console.log(graphPageUrl, tablePageUrl);
+
+  // undefined means "no sounding": the simulation then falls back to its own initial profile
+  // instead of forcing the atmosphere towards a broken one.
+  return soundingTableData && soundingTableData.length > 10 ? soundingTableData : undefined;
 }
 
 function sampleIsInvalid(s) { return isNaN(s.t) || isNaN(s.td) || isNaN(s.vel); }
@@ -1711,7 +1784,15 @@ async function prepareSounding()
 
   epochTime += hour * 3600;
 
-  soundingData = await loadSounding(stationSelector.options[stationSelector.selectedIndex].value, epochTime);
+  try {
+    soundingData = await loadSounding(stationSelector.options[stationSelector.selectedIndex].value, epochTime);
+  } catch (error) {
+    // This runs from change handlers that do not await it, so an unhandled rejection here used
+    // to surface as "Uncaught (in promise)" and left the sounding UI in whatever state it was.
+    console.error('Error preparing the sounding:', error);
+    soundingData = undefined;
+    setSoundingStatus('Could not load the sounding. The data service may be unreachable — try again or pick another station.', true);
+  }
 }
 
 async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initialRainDrops)
@@ -7217,7 +7298,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
       return program; // linked succesfully
     } else {
-      throw 'ERROR: ' + gl.getProgramInfoLog(program);
+      const errorLog = gl.getProgramInfoLog(program);
+      console.error('Program linking failed:', errorLog);
+      throw 'ERROR: ' + errorLog;
       gl.deleteProgram(program);
     }
   }
@@ -7279,7 +7362,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
       // Compile error
-      throw filename + ' COMPILATION ' + gl.getShaderInfoLog(shader);
+      const errorLog = gl.getShaderInfoLog(shader);
+      console.error('Shader compilation failed:', filename, errorLog);
+      throw filename + ' COMPILATION ' + errorLog;
     }
     return new Promise(async (resolve) => {
       await loadingBar.add(3, 'Loading shader: ' + nameIn);

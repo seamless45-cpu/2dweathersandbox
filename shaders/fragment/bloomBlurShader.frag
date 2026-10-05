@@ -1,6 +1,9 @@
 #version 300 es
-precision mediump float;
-precision mediump sampler2D;
+// highp, not mediump: texelSize is a uniform shared with the vertex shader, which declares it
+// highp. A stage that declares the same uniform at a different precision makes the link fail
+// outright ("Precision qualifiers must match"), and the bloom pass then has no program at all.
+precision highp float;
+precision highp sampler2D;
 
 // in vec2 texCoord;     // this
 in vec2 texCoordXmY0; // left

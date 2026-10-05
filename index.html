@@ -166,6 +166,14 @@
             border-radius: var(--radius);
         }
         #soundingPreview { display: block; width: 100%; height: auto; max-height: 480px; object-fit: contain; background: var(--bg); border-radius: 4px; }
+        .sounding-status {
+            margin: 0; padding: 10px 12px;
+            font-size: 0.85rem; line-height: 1.5;
+            color: var(--text-muted);
+            border-top: 1px solid var(--panel-border);
+        }
+        .sounding-status.error { color: var(--error); }
+        .sounding-status[hidden] { display: none; }
 
         /* ===== LIVE PIPELINE ===== */
         .stages { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -567,7 +575,8 @@
                     <p class="note">Select a <b>real world sounding</b> to use as forcing in the simulation.</p>
                 </div>
                 <div class="preview-frame">
-                    <img id="soundingPreview" alt="sounding arent available. pls select a different one">
+                    <img id="soundingPreview" alt="Sounding chart">
+                    <p id="soundingStatus" class="sounding-status" hidden></p>
                 </div>
             </div>
         </section>
