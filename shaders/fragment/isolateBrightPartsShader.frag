@@ -15,12 +15,14 @@ void main()
 {
   vec3 outputCol = texture(hdrTex, texCoord).rgb;
 
-  //  outputCol = pow(outputCol, vec3(4.0)); // only keep bright parts
+  // Simple bright extraction: scale down and threshold. Cheaper than soft-knee
+  // but still produces a natural-looking bloom without hard edges.
+  float lum = dot(outputCol, vec3(0.2126, 0.7152, 0.0722));
 
+  // Smooth threshold: fade in from zero over a range above the threshold
+  float knee = lum - 0.5; // threshold = 0.5
+  knee = knee * knee * 6.0; // smooth quadratic ramp, squared for softness
+  knee = clamp(knee / max(lum, 0.001), 0.0, 1.0);
 
-  // outputCol = max(outputCol - vec3(0.9), 0.0); // only keep bright parts
-
-  outputCol *= 0.02;
-
-  fragmentColor = vec3(outputCol);
+  fragmentColor = vec3(outputCol * knee * 3.0);
 }

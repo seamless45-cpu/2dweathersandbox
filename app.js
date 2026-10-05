@@ -1610,7 +1610,7 @@ class LoadingBar
   constructor(percentIn)
   {
     this.percent = percentIn == null ? 0 : percentIn;
-    this.description = 'INITIALIZING';
+    this.description = 'Initializing';
 
     // reworked loading screen: themed boot-sequence overlay (styled in index.html)
     this.#overlay = document.createElement('div');
@@ -1618,16 +1618,15 @@ class LoadingBar
     this.#overlay.innerHTML = `
         <div class="ls-box">
             <div class="ls-head">
-                <div class="ls-glyph"></div>
                 <div class="ls-titles">
-                    <div class="ls-title">2D WEATHER SANDBOX</div>
-                    <div class="ls-sub">ATMOS-KERNEL // BOOT SEQUENCE</div>
+                    <div class="ls-title">2D Weather Sandbox</div>
+                    <div class="ls-sub">Atmospheric Simulation</div>
                 </div>
                 <div class="ls-led"></div>
             </div>
-            <div class="ls-status">INITIALIZING</div>
+            <div class="ls-status">Initializing</div>
             <div class="ls-track"><div class="ls-fill"></div></div>
-            <div class="ls-meta"><span class="ls-percent">0%</span><span class="ls-step">SYS 00</span></div>
+            <div class="ls-meta"><span class="ls-percent">0%</span><span class="ls-step">Step 00</span></div>
         </div>`;
 
     this.#fill = this.#overlay.querySelector('.ls-fill');
@@ -1668,7 +1667,7 @@ class LoadingBar
       this.#fill.style.width = pct + '%';
       this.#percentText.textContent = pct + '%';
       this.#statusText.textContent = this.description;
-      this.#stepText.textContent = 'SYS ' + String(pct).padStart(2, '0');
+      this.#stepText.textContent = 'Step ' + String(pct).padStart(2, '0');
       setTimeout(() => { resolve(); }, 5);
     });
   }

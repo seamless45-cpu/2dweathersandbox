@@ -23,34 +23,27 @@ out vec4 fragmentColor;
 #include "commonDisplay.glsl"
 
 // ── tone mapping ────────────────────────────────────────────────────────────────
-// The scene is rendered in linear light into a float texture, and the sun, bright water and
-// the lit tops of clouds are all far above 1.0. Without a tone curve everything above 1.0
-// simply clips to white, which is what made daylight look flat and washed out: terrain, clouds
-// and sky all ended up in the same narrow band near white.
-//
-// The old line here was `x / (x + 1) * 1.1`, a Reinhard curve with its white point at the bottom
-// of the range. It is not a curve anybody shoots with: it starts compressing at black, so it
-// darkens the whole image to buy highlight range nobody was using, and it is currently
-// commented out, so the image clips instead.
-//
-// This is the extended Reinhard operator (Reinhard et al. 2005, "Photographic Tone
-// Reproduction for Digital Images"). The white point W says what scene value counts as white,
-// and the mapping is arranged so x = W lands exactly on 1.0:
-//     f(x) = x (1 + x / W^2) / (1 + x)
-// Below the toe it is very close to the identity, so shadows and midtones keep the exposure
-// they had, and everything above ~1 rolls off smoothly into the display range instead of
-// clipping to a flat white blob. The same curve desaturates nothing on its own, so bright
-// water and cloud still keep their colour as they approach white.
+// ACES filmic tone mapping curve. This gives a natural highlight rolloff,
+// preserves saturation in bright areas, and produces a cinematic look.
+// Based on the ACES reference implementation (simplified for real-time).
+vec3 ACESFilm(vec3 x)
+{
+  float a = 2.51;
+  float b = 0.03;
+  float c = 2.43;
+  float d = 0.59;
+  float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// Extended Reinhard as fallback / secondary curve
 vec3 reinhardToneMap(vec3 x)
 {
-  const float whitePoint = 2.2; // scene value that should read as pure white
+  const float whitePoint = 2.2;
   return clamp(x * (1.0 + x / (whitePoint * whitePoint)) / (1.0 + x), 0.0, 1.0);
 }
 
-// Interleaved gradient noise: a cheap, very evenly distributed dither pattern. A smooth
-// gradient like the sky turns into visible bands as soon as the frame buffer only has 8 bits
-// per channel, and banding is the single most obvious "this is not a real photograph" cue.
-// Adding about one least significant bit of noise before the gamma correction removes it.
+// Interleaved gradient noise for dithering
 float interleavedGradientNoise(vec2 pixel)
 {
   return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
@@ -62,32 +55,37 @@ void main()
 
   vec3 bloom = texture(bloomTex, texCoord).rgb;
 
-  // The bloom texture is a blurred copy of the whole frame, so adding all of it lifts the
-  // shadows as well and turns the sky milky. Keeping it at a fraction keeps the glow around
-  // the sun and bright water without washing out the rest of the image.
-  outputCol += bloom * 0.30;
+  // Bloom: blend in the bright glow. Slightly stronger than before for more
+  // cinematic feel, but still restrained so it doesn't wash out the image.
+  outputCol += bloom * 0.35;
 
   outputCol *= exposure;
 
-  // 1. filmic highlight rolloff in linear light: the sun, bright water and lit cloud tops come
-  //    down smoothly instead of pinning at pure white
-  outputCol = reinhardToneMap(outputCol);
+  // 1. ACES filmic tone mapping: natural highlight rolloff with good saturation
+  outputCol = ACESFilm(outputCol);
 
   // 2. gamma correction
   outputCol = pow(outputCol, ONE_OVER_GAMMA);
 
-  // 3. gentle S-curve around the middle grey, so the scene does not look flat and hazy once
-  //    the highlights have been compressed into a narrower range
-  outputCol = mix(outputCol, outputCol * outputCol * (3.0 - 2.0 * outputCol), 0.18);
+  // 3. gentle S-curve for contrast
+  outputCol = mix(outputCol, outputCol * outputCol * (3.0 - 2.0 * outputCol), 0.22);
 
-  // 4. give back a little of the saturation the tone curve takes out of the bright areas, never
-  //    past what the display can show
+  // 4. saturation boost: give back saturation the tone curve removes from bright areas
   float luma = dot(outputCol, vec3(0.2126, 0.7152, 0.0722));
-  outputCol = clamp(mix(vec3(luma), outputCol, 1.12), 0.0, 1.0);
+  outputCol = clamp(mix(vec3(luma), outputCol, 1.18), 0.0, 1.0);
 
-  // 5. dither, in display space where the 8 bit quantisation actually happens. A smooth sky
-  //    otherwise shows hard bands, the most obvious "this is not a photograph" cue there is.
-  outputCol += (interleavedGradientNoise(fragCoord) - 0.5) / 255.0;
+  // 5. subtle vignette: darken the edges to draw focus to the center.
+  // Uses squared distance to avoid the sqrt() in length() for performance.
+  vec2 vigCoord = texCoord - vec2(0.5);
+  vigCoord.x *= 0.7;
+  float vigDist2 = dot(vigCoord, vigCoord); // squared distance, no sqrt needed
+  float vignette = 1.0 - smoothstep(0.12, 0.72, vigDist2) * 0.28;
+  outputCol *= vignette;
+
+  // 6. dither to remove banding in smooth gradients.
+  // Use texCoord scaled to approximate pixel space for the noise pattern.
+  vec2 ditherCoord = texCoord * 1000.0;
+  outputCol += (interleavedGradientNoise(ditherCoord) - 0.5) / 255.0;
 
   fragmentColor = vec4(clamp(outputCol, 0.0, 1.0), 1.0);
 }

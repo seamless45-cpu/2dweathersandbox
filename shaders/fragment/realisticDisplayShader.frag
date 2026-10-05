@@ -126,10 +126,7 @@ vec3 getWallColor(float depth)
 {
   vec2 surfaceCoord = vec2(texCoord.x * resolution.x, texCoord.y * resolution.y);
 
-  // How much vegetation is actually growing here, and how healthy it is. The old code mixed
-  // green and brown with a single soil moisture term and then covered it with a noise texture,
-  // so a dry surface and a vegetated one ended up almost the same colour and the vegetation
-  // brush was invisible in the render.
+  // How much vegetation is actually growing here, and how healthy it is.
   float vegAmount = clamp(float(wall[VEGETATION]) / 60.0, 0.0, 1.0);
   float moisture = clamp(water[SOIL_MOISTURE] / fullGreenSoilMoisture, 0.0, 1.0);
   float lushness = vegAmount * smoothstep(0.05, 0.55, moisture);
@@ -143,23 +140,8 @@ vec3 getWallColor(float depth)
 
   vec3 surfCol = mix(bareSoilCol, vegetationCol, lushness);
 
-  // Bedrock. The old code mixed towards a flat grey with `depth * 0.35`, and because only the
-  // top few cells of a wall are ever visible that turned the whole landscape into a grey putty
-  // blob: the entire surface, flat ground included, was painted as rock. Rock is actually
-  // exposed where the ground is too steep to hold soil, and deep inside the wall where there is
-  // no soil left at all.
+  // Bedrock exposure on steep slopes and deep inside the wall.
   float slope = getSurfaceSlope();
-  // the depth ramp is deliberately long, and the slope term fades out with depth: the surface
-  // height is horizontally interpolated across each cell to draw the 45 degree slopes, and next
-  // to a cliff that interpolation makes the depth differ by a whole cell between neighbouring
-  // columns. A short ramp turned that into a light vertical stripe running down the whole wall.
-  // Slope describes the face of the cliff, not the rock in the middle of the hill behind it, and
-  // a depth ramp short enough to see turns the height of every hill into a tonal band.
-  // Only a real cliff exposes its rock. The surface gradient is measured in cells of rise per
-  // cell across, so a gently sloping hill is around 0.25 and a 45 degree face is 0.5; anything
-  // below about half a cell of rise per cell is still ground that can hold soil. Treating every
-  // slope as bare rock painted a pale streak down the flank of every hill, which looked like a
-  // lighting bug rather than like stone.
   float cliff = smoothstep(0.5, 0.95, slope);
   float bedrock = clamp(max(cliff * 0.7 * (1.0 - smoothstep(0.5, 6.0, depth)), smoothstep(10.0, 50.0, depth) * 0.6), 0.0, 1.0);
 
@@ -171,19 +153,42 @@ vec3 getWallColor(float depth)
 
   vec3 color = mix(surfCol, bedrockCol, bedrock);
 
-  // Multi-scale detail on the surface: patches of different ground cover, plus fine grain. The
-  // scales are in cells per tile, so 0.05 is a patch about 20 cells across and 0.16 is grain
-  // about 6 cells across, which is the range the mipmapped noise texture can still show.
+  // Multi-scale surface detail: patches of ground cover plus fine grain.
   color *= mix(1.0, 0.45 + 1.1 * surfaceDetail(surfaceCoord, 0.16).g, 0.50 * (1.0 - bedrock));
   color *= mix(1.0, 0.55 + 0.9 * surfaceDetail(surfaceCoord * 0.3, 0.05).b, 0.45);
 
   // soil that has never been wet is bleached, so it is less saturated than fresh soil
   color = mix(vec3(dot(color, vec3(0.33, 0.42, 0.25))), color, 0.75 + 0.25 * smoothstep(0.0, 12.0, water[SOIL_MOISTURE]));
 
-  // Snow cover, with the faint blue shadow tint snow actually has instead of pure white.
+  // ── surface normal shading ───────────────────────────────────────────────
+  // Approximate a surface normal from the height field and use it to modulate
+  // the surface colour with a simple Lambertian term. This gives the terrain
+  // real shading instead of looking like a flat colouring-book fill.
+  ivec4 wallLeft = texture(wallTex, texCoordXmY0);
+  ivec4 wallRight = texture(wallTex, texCoordXpY0);
+  float hL = float(-wallLeft[VERT_DISTANCE]) + 1.0;
+  float hR = float(-wallRight[VERT_DISTANCE]) + 1.0;
+  // Surface normal: X component from the height difference, Y = 1 (facing up)
+  vec2 surfNormal2D = normalize(vec2(-(hR - hL) * 0.5, 1.0));
+  // Sun direction in the 2D side view: x = sin(sunAngle), y = cos(sunAngle)
+  float sunDot = max(dot(surfNormal2D, vec2(sin(sunAngle), cos(sunAngle))), 0.0);
+  // Mix a gentle Lambertian term (0.35 ambient + 0.65 directional) into the surface
+  float surfaceLighting = 0.35 + 0.65 * sunDot;
+  color *= mix(1.0, surfaceLighting, 0.45 * (1.0 - bedrock));
+
+  // ── ambient occlusion approximation ──────────────────────────────────────
+  // Cells surrounded by taller neighbours are in shadow. Using the distance
+  // field, the closer a surface cell is to a wall, the more occluded it is.
+  float aoNeighbourhood = max(float(wall[DISTANCE]), 1.0);
+  float ao = clamp(1.0 - 0.12 / aoNeighbourhood, 0.6, 1.0);
+  color *= ao;
+
+  // Snow cover, with the faint blue shadow tint snow actually has.
   const vec3 snowCol = pow(vec3(0.86, 0.89, 0.96), vec3(GAMMA));
   float snowCover = clamp(min(water[SNOW], fullWhiteSnowHeight) / fullWhiteSnowHeight - max(depth * 0.3, 0.0), 0.0, 1.0);
-  color = mix(color, snowCol * mix(0.82, 1.0, surfaceDetail(surfaceCoord, 0.12).r), snowCover);
+  // snow has subtle sparkle: a high-frequency noise modulates its brightness
+  float snowSparkle = 0.90 + 0.10 * surfaceDetail(surfaceCoord, 0.22).r;
+  color = mix(color, snowCol * mix(0.82, 1.0, snowSparkle), snowCover);
 
   return color;
 }
@@ -328,15 +333,36 @@ vec4 getAirColor(vec2 fragCoordIn)
 
   float cloudwater = water[CLOUD];
 
-  vec3 cloudCol = vec3(1.0 / (cloudwater * 0.005 + 1.0)); // 0.10 white to black
-
+  // ── volumetric cloud shading ─────────────────────────────────────────────
+  // Real clouds have bright tops (lit from above by the sun) and darker bases
+  // (shadowed from below). We approximate this with the height in the sim:
+  // the higher the cloud cell, the more sunlit it is. The base is tinted
+  // with a cool grey-blue to mimic the shadow of the cloud above it.
   float cloudDensity = max(cloudwater * 13.6, 0.0);
-
   float totalDensity = cloudDensity + water[PRECIPITATION] * 0.8; // visualize precipitation
 
-
-  // float cloudOpacity = clamp(cloudwater * 4.0, 0.0, 1.0);
   float cloudOpacity = clamp(1.0 - (1.0 / (1. + totalDensity)), 0.0, 1.0);
+
+  // Height-dependent lighting: top of the cloud column is bright, bottom is shadowed
+  float cloudHeightFrac = clamp(texCoord.y, 0.0, 1.0);
+  // Sun-lit top: warm white, dark base: cool blue-grey
+  const vec3 cloudTopCol = vec3(1.0, 0.98, 0.96);
+  const vec3 cloudBaseCol = vec3(0.42, 0.47, 0.55); // pre-gamma-corrected
+  // Simple linear blend based on height; cheaper than double smoothstep
+  float cloudLitFactor = cloudHeightFrac;
+  vec3 cloudCol = mix(cloudBaseCol, cloudTopCol, cloudLitFactor);
+
+  // Thin clouds at the edges are slightly translucent, showing a bluish tint from scattering
+  float cloudThickness = clamp(totalDensity * 0.04, 0.0, 1.0);
+  vec3 cloudEdgeTint = vec3(0.70, 0.78, 0.88);
+  cloudCol = mix(cloudEdgeTint, cloudCol, cloudThickness);
+
+  // Sunset/sunrise: clouds pick up the colour of the sunlight
+  float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0.0, 1.0), 0.0, 1.0);
+  cloudCol = mix(cloudCol, cloudCol * sunColor(scatering) * 1.8, scatering * 0.7);
+  // Night clouds: very dim, just slightly brighter than the sky
+  float night = clamp(map_range(abs(sunAngle), 90. * deg2rad, 100. * deg2rad, 0.0, 1.0), 0.0, 1.0);
+  cloudCol *= mix(1.0, 0.08, night);
 
   const vec3 smokeThinCol = vec3(0.8, 0.51, 0.26);
   const vec3 smokeThickCol = vec3(0., 0., 0.);
@@ -345,14 +371,29 @@ vec4 getAirColor(vec2 fragCoordIn)
   float smokeOpacity = clamp(1. - (1. / (water[SMOKE] + 1.)), 0.0, 1.0);
   float fireIntensity = clamp((smokeOpacity - 0.8) * 25., 0.0, 1.0);
 
-  vec3 fireCol = hsv2rgb(vec3(fireIntensity * 0.008, 0.98, 5.0)) * 1.0; // 1.0, 0.7, 0.0
+  // ── black-body fire colour ───────────────────────────────────────────────
+  // Fire colour follows a temperature gradient: deep red at the cool edges,
+  // through orange and yellow, to near-white at the hottest core.
+  // Uses simple mix with linear ramps instead of smoothstep for performance.
+  vec3 fireCol;
+  {
+    float fi = fireIntensity;
+    const vec3 fireRed    = vec3(0.62, 0.08, 0.003);  // pre-gamma-corrected
+    const vec3 fireOrange = vec3(0.96, 0.30, 0.02);
+    const vec3 fireYellow = vec3(1.00, 0.72, 0.12);
+    const vec3 fireWhite  = vec3(1.00, 0.92, 0.70);
+    fireCol = mix(fireRed, fireOrange, clamp(fi * 3.33, 0.0, 1.0));           // 0..0.3
+    fireCol = mix(fireCol, fireYellow, clamp((fi - 0.3) * 3.33, 0.0, 1.0)); // 0.3..0.6
+    fireCol = mix(fireCol, fireWhite, clamp((fi - 0.6) * 2.5, 0.0, 1.0));   // 0.6..1.0
+    fireCol *= 4.0; // emissive
+  }
 
   vec3 smokeOrFireCol = mix(mix(smokeThinCol, smokeThickCol, smokeOpacity), fireCol, fireIntensity);
 
   shadowLight += fireIntensity * 2.5;                                                                                 // 1.5
 
   float opacity = 1. - (1. - smokeOpacity) * (1. - cloudOpacity);                                                     // alpha blending
-  vec3 color = (smokeOrFireCol * smokeOpacity / opacity) + (cloudCol * cloudOpacity * (1. - smokeOpacity) / opacity); // color blending
+  vec3 color = (smokeOrFireCol * smokeOpacity / max(opacity, 0.001)) + (cloudCol * cloudOpacity * (1. - smokeOpacity) / max(opacity, 0.001)); // color blending
 
 
   vec4 lightningData = texture(lightningDataTex, vec2(0.5));
@@ -499,44 +540,57 @@ void main()
         color = airColor.rgb;
       } else {
         // ── water body ────────────────────────────────────────────────────────────
-        // Was a flat vec3(0, 0.5, 1.0) for every water pixel, which is why the sea read as a
-        // sheet of blue paper. What makes water look like water is that its colour depends on
-        // how far the light has to travel through it: near the surface, light that scattered in
-        // the upper layer of the water is still on its way to the eye, so the water is a
-        // luminous blue-green; deeper down everything except the long wavelengths is already
-        // scattered away and what is left is nearly black.
+        // Beer-Lambert style depth-dependent absorption: shallow water is turquoise
+        // because short wavelengths scatter back; deep water is near-black because
+        // all wavelengths are absorbed over long path lengths.
         float depthBelowSurface = max(-float(wall[VERT_DISTANCE]) - (waterLevel - fract(fragCoord.y)), 0.0); // cells below the water line
 
-        // Beer-Lambert style falloff of the scattered light with depth
         float shallow = exp(-depthBelowSurface * 0.55);
 
         const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA)); // turquoise, lit from above
-        const vec3 deepCol = pow(vec3(0.03, 0.09, 0.20), vec3(GAMMA));    // blue, light already scattered out
-        const vec3 sandCol = pow(vec3(0.55, 0.48, 0.36), vec3(GAMMA));   // the lit bottom, seen through very shallow water
+        const vec3 deepCol = pow(vec3(0.02, 0.06, 0.15), vec3(GAMMA));    // very dark blue, light fully absorbed
+        const vec3 sandCol = pow(vec3(0.55, 0.48, 0.36), vec3(GAMMA));    // the lit bottom, seen through very shallow water
 
         color = mix(deepCol, shallowCol, shallow);
 
-        // The bottom shows through only in the last fraction of a cell. One cell is 120 m
-        // across, so even the two cell deep sea at the bottom of the screen is deep water, and
-        // letting the sea floor tint it through the whole column turned the ocean olive.
+        // ── Fresnel reflection ────────────────────────────────────────────────
+        // At grazing angles the water reflects the sky instead of transmitting
+        // light through itself. This makes the horizon band of the sea a
+        // mirror of the sky, the way real water looks.
+        float viewAngle = clamp(fract(fragCoord.y) - waterLevel + 1.0, 0.0, 1.0);
+        float fresnel = pow(1.0 - viewAngle, 4.0) * 0.55;
+        // The reflected colour is a hint of the sky: pale blue
+        vec3 skyReflectCol = pow(vec3(0.55, 0.68, 0.85), vec3(GAMMA));
+        color = mix(color, skyReflectCol * clamp(lightIntensity, 0.0, 1.5), fresnel);
+
+        // The bottom shows through only in the last fraction of a cell.
         float seeThrough = smoothstep(0.55, 0.0, depthBelowSurface) * 0.35;
         color = mix(color, sandCol * (0.5 + 0.7 * shallow), seeThrough);
 
-        // ── surface ───────────────────────────────────────────────────────────────
-        // A specular highlight from the wave signal, the way sunlight glints off a rippled
-        // surface. The wave derivative gives the slope of the surface, which is what decides
-        // where the reflection of the sun lands.
+        // ── wave surface detail ──────────────────────────────────────────────
+        // Specular highlight from the wave signal, simulating sunlight glinting
+        // off a rippled surface. Uses single-frequency slope for performance.
         float waveSlope = cos(fragCoord.x * freqs[0] + iterNum * speeds[0] + phases[0]) * amps[0] * freqs[0];
         float ripple = 0.5 + 0.5 * sin(fragCoord.x * freqs[2] - iterNum * speeds[2] + phases[2]);
-        float glint = pow(clamp(1.0 - abs(waveSlope) * 0.3 - (1.0 - ripple) * 0.2, 0.0, 1.0), 4.0);
+
+        float glint = pow(clamp(1.0 - abs(waveSlope) * 0.3 - (1.0 - ripple) * 0.2, 0.0, 1.0), 6.0);
 
         // only the very top of the water column gets the reflection of the sky
-        float surfaceBand = smoothstep(0.30, 0.0, waterLevel - fract(fragCoord.y));
-        color += vec3(0.90, 0.95, 1.0) * glint * surfaceBand * 0.45 * clamp(lightIntensity, 0.0, 2.0);
+        float surfaceBand = smoothstep(0.25, 0.0, waterLevel - fract(fragCoord.y));
+        color += vec3(0.95, 0.97, 1.0) * glint * surfaceBand * 0.50 * clamp(lightIntensity, 0.0, 2.0);
+
+        // Subtle subsurface scattering: a thin bright band just below the surface
+        // where sunlight has scattered through the upper layer of water.
+        float subsurface = smoothstep(0.0, 0.3, waterLevel - fract(fragCoord.y)) * smoothstep(1.5, 0.3, waterLevel - fract(fragCoord.y));
+        color += vec3(0.08, 0.22, 0.18) * subsurface * clamp(lightIntensity, 0.0, 1.5) * shallow;
 
         // foam where the water meets the ground, and on the crests of the waves
         float shoreFoam = smoothstep(0.45, 0.0, depthBelowSurface);
-        color = mix(color, vec3(0.80, 0.88, 0.92) * (0.45 + 0.55 * ripple), shoreFoam * 0.30);
+        // Wave crest foam: where the wave slope changes rapidly
+        float crestFoam = smoothstep(0.4, 0.8, abs(waveSlope) * 8.0) * surfaceBand;
+        float foam = max(shoreFoam, crestFoam * 0.4);
+        vec3 foamCol = vec3(0.85, 0.90, 0.94) * (0.50 + 0.50 * ripple);
+        color = mix(color, foamCol, foam * 0.35);
       }
 
       // draw 45° slopes under water
@@ -571,22 +625,19 @@ void main()
     color = airColor.rgb;
 
 
+    // ── rainbow ────────────────────────────────────────────────────────────────
     vec2 rainbowCenter = vec2(0.0, -1.5 + abs(sunAngle) * 0.60);
-
     float centerDist = length(onScreenUV - rainbowCenter) * 1.3;
-
     const float cameraHeight = 1.0;
-
     float angle = atan(centerDist / cameraHeight) * rad2deg;
-
-    float waveLength = map_range(angle, 40.0, 42.0, 400., 700.);
-
-    float rainSnowFactor = map_rangeC(KtoC(realTemp), 0.0, 5.0, 0.0, 1.0); // only rain if above freezing
-
-    vec3 rainbowCol = spectral_zucconi(waveLength) * min(pow(lightIntensity, 2.0) * 1.9, 1.0) * min(water[PRECIPITATION] * 3.0, 1.0) * rainSnowFactor * 0.7;
+    float waveLength = map_range(angle, 40.0, 42.5, 400., 700.);
+    float rainSnowFactor = map_rangeC(KtoC(realTemp), 0.0, 5.0, 0.0, 1.0);
+    float rainbowIntensity = min(pow(lightIntensity, 2.0) * 1.9, 1.0) * min(water[PRECIPITATION] * 3.0, 1.0);
+    float arcFade = smoothstep(39.5, 40.5, angle) * smoothstep(43.0, 42.0, angle);
+    vec3 rainbowCol = spectral_zucconi(waveLength) * rainbowIntensity * rainSnowFactor * 0.7 * arcFade;
 
     emittedLight += rainbowCol;
-    opacity = max(opacity - length(rainbowCol), 0.); // remove some white rain to prevent overbrightening and increase color saturation
+    opacity = max(opacity - length(rainbowCol), 0.);
 
 
     if (wall[VERT_DISTANCE] >= 0 && wall[VERT_DISTANCE] < 10) { // near surface
@@ -692,16 +743,12 @@ void main()
             texCol = vec4(vec3(1.), 1.);                                                                                                                          // show white snow layer above ground
           else {                                                                                                                                                  // display vegetation
           vec4 treeColor = surfaceTexture(FOREST, vec2(treeTexCoordX, treeTexCoordY));
-          // How much of the green has gone out of the canopy as the soil dries. The old
-          // expression mixed a saturated orange in at a flat 0.5 even for damp ground, which is
-          // what drew the hard red-brown stroke along the top of the terrain: a row of trees
-          // tinted with one flat colour instead of a canopy that changes with the season.
-          const vec3 parchedCanopyCol = pow(vec3(0.52, 0.50, 0.34), vec3(GAMMA));
+          // How much of the green has gone out of the canopy as the soil dries.
+          const vec3 parchedCanopyCol = vec3(0.42, 0.38, 0.20); // pre-gamma-corrected
           float parched = map_rangeC(surfaceWater[SOIL_MOISTURE], 4.0, 40.0, 0.85, 0.0) * treeColor.a;
           vec4 vegetationCol = mix(treeColor, vec4(parchedCanopyCol, 1.), parched);
-          // the underside of a canopy is in its own shadow, so it is darker than the ground
-          // around it; without this the trees read as a row of bright blocks stuck on top
-          vegetationCol.rgb *= mix(0.70, 1.0, clamp(localY / max(treeTexHeightNorm, 0.001), 0.0, 1.0));
+          // The underside of a canopy is in its own shadow, darker at the base
+          vegetationCol.rgb *= mix(0.55, 1.0, clamp(localY / max(treeTexHeightNorm, 0.001), 0.0, 1.0));
           texCol = mix(vegetationCol, surfaceTexture(SNOW_FOREST, vec2(treeTexCoordX, treeTexCoordY)), min(snow / fullWhiteSnowHeight, 1.0));
           }
         } else if (wallX0Ym[TYPE] == WALLTYPE_FIRE) {
@@ -772,6 +819,26 @@ void main()
 
 
   finalLight += vec3(shadowLight) + onLight;
+
+  // ── atmospheric perspective (distance fog) ─────────────────────────────────
+  // Distant terrain fades towards the horizon colour for depth. Uses simple
+  // linear falloff based on height in the sim (lower = more atmosphere).
+  float fogDistance = clamp(1.0 - texCoord.y, 0.0, 1.0); // more fog near ground
+  float fogFactor = fogDistance * fogDistance * 0.35; // quadratic falloff, cheaper than pow()
+
+  // Fog colour follows the sky at the horizon: pale blue during the day, orange at sunset
+  vec3 horizonFogCol;
+  {
+    float nightFactor = clamp(map_range(abs(sunAngle), 90. * deg2rad, 100. * deg2rad, 0.0, 1.0), 0.0, 1.0);
+    vec3 dayFogCol = pow(vec3(0.60, 0.72, 0.88), vec3(GAMMA));
+    vec3 sunsetFogCol = pow(vec3(0.80, 0.50, 0.30), vec3(GAMMA));
+    const vec3 nightFogCol = vec3(0.008, 0.012, 0.025); // pre-computed dark blue
+    horizonFogCol = mix(dayFogCol, sunsetFogCol, scatering * 0.7);
+    horizonFogCol = mix(horizonFogCol, nightFogCol, nightFactor);
+  }
+
+  // Apply fog to surface/terrain for depth perception
+  color = mix(color, horizonFogCol, fogFactor);
 
   opacity += length(emittedLight);
   opacity = clamp(opacity, 0.0, 1.0);

@@ -127,44 +127,58 @@ void main()
   ambientLight = texture(ambientLightTex, texCoord).rgb;
 
   // ── sky gradient ──────────────────────────────────────────────────────────────
-  // The old version was an HSV ramp: value = pow(mapRange(y, 0, 3.2, 1, 0.05), 5). The fifth
-  // power made the brightness collapse within a few cells of the top, which drew a hard,
-  // perfectly straight band across the sky, and because the two ends of the ramp were pushed
-  // through the frame buffer with no tone curve the whole thing clipped to two flat colours.
-  //
-  // What is physically going on: the sky is air lit by the sun, and the light that reaches the
-  // eye from a given direction has been scattered out of the beam. Close to the horizon the
-  // line of sight passes through many times more air than straight up, so it is dimmer, whiter
-  // (the blue has been scattered away) and more strongly reddened by the long path. That gives
-  // a smooth two-part falloff: a steep one with height, and a slow one towards the horizon.
+  // Physically-based sky approximation using Rayleigh and Mie scattering.
+  // Rayleigh scattering is wavelength-dependent and makes the sky blue overhead;
+  // Mie scattering is wavelength-independent and makes the sky bright/white near
+  // the sun and at the horizon.
   float height01 = clamp(texCoord.y, 0.0, 1.0); // 0 = horizon, 1 = top of the screen
 
-  // Rayleigh-ish vertical falloff: the exponent below 1 keeps the deep blue over most of the
-  // upper sky and compresses the change into the last few degrees above the horizon.
+  // Rayleigh-like vertical falloff: steep blue overhead, lighter towards horizon
   float skyHeight = pow(height01, 0.55);
 
-  // linear-space sky colours: deep blue overhead, pale and whitish at the horizon
-  const vec3 zenithCol = vec3(0.055, 0.16, 0.42);
+  // linear-space sky colours
+  const vec3 zenithCol = vec3(0.04, 0.12, 0.38);
+  const vec3 midSkyCol = vec3(0.22, 0.42, 0.78);
   const vec3 horizonCol = vec3(0.62, 0.74, 0.92);
 
-  vec3 mixedCol = mix(horizonCol, zenithCol, skyHeight);
+  // Three-stop gradient for richer sky colour
+  vec3 mixedCol;
+  if (skyHeight > 0.5) {
+    mixedCol = mix(midSkyCol, zenithCol, (skyHeight - 0.5) * 2.0);
+  } else {
+    mixedCol = mix(horizonCol, midSkyCol, skyHeight * 2.0);
+  }
 
-  // Aerial haze: the last few percent above the horizon are washed out by the long path
-  // through the lower atmosphere. This is what removes the hard line between sky and ground.
+  // ── Mie scattering (brightening near sun/horizon) ──────────────────────────
+  // The sun's position brightens the sky around it. We approximate the Mie
+  // scattering lobe with a polynomial instead of exp() for performance.
+  float sunElevNorm = clamp(cos(sunAngle), 0.0, 1.0); // how high the sun is
+  float sunY = sunElevNorm; // approximate sun position in screen Y
+  float sunDist = abs(height01 - sunY);
+  float mieLobe = max(0.0, 1.0 - sunDist * 2.5) * 0.4 * sunElevNorm; // polynomial approximation of exp(-x²*8)
+  vec3 mieCol = vec3(0.95, 0.90, 0.80); // warm white
+  mixedCol += mieCol * mieLobe;
+
+  // Aerial haze near the horizon
   float haze = pow(1.0 - height01, 8.0);
   mixedCol = mix(mixedCol, horizonCol * 1.05, haze * 0.85);
 
-  // The sky takes the colour of the sunlight, so at sunrise and sunset it reddens with it
-  // instead of staying blue. scatering is 0 during the day and 1 at the horizon of the sun.
+  // The sky takes the colour of the sunlight, so at sunrise and sunset it reddens
   float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0.0, 1.0), 0.0, 1.0);
   mixedCol = mix(mixedCol, mixedCol * sunColor(scatering) * 1.6, scatering * 0.8);
 
-  // At night there is no scattered sunlight: the sky is only the faint airglow near the
-  // horizon plus whatever the ground and the clouds reflect back. 90 deg is the sun sitting on
-  // the horizon (see the scatering term above), so night only starts past that.
+  // ── sunset/sunrise band ────────────────────────────────────────────────────
+  // A warm orange-red band appears near the horizon when the sun is low.
+  // Uses polynomial falloff instead of pow() for performance.
+  float horizonFade = (1.0 - height01) * (1.0 - height01); // quadratic, cheaper than pow()
+  float sunsetBand = scatering * horizonFade * 1.5;
+  const vec3 sunsetCol = vec3(0.82, 0.32, 0.08); // pre-gamma-corrected
+  mixedCol = mix(mixedCol, sunsetCol, clamp(sunsetBand, 0.0, 0.6));
+
+  // At night the sky is very dark with faint airglow
   float night = clamp(map_range(abs(sunAngle), 90. * deg2rad, 100. * deg2rad, 0.0, 1.0), 0.0, 1.0);
-  const vec3 nightZenithCol = vec3(0.004, 0.008, 0.022);
-  const vec3 nightHorizonCol = vec3(0.020, 0.030, 0.055);
+  const vec3 nightZenithCol = vec3(0.002, 0.005, 0.018);
+  const vec3 nightHorizonCol = vec3(0.015, 0.025, 0.050);
   mixedCol = mix(mixedCol, mix(nightHorizonCol, nightZenithCol, skyHeight), night);
 
   vec3 airplaneLights;
