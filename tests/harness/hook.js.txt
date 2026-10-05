@@ -1,0 +1,131 @@
+  // ---- test harness hook (injected by tests/build.mjs, not part of the app) ----
+  window.__sim = {
+    get SETUP_MODE() { return SETUP_MODE; },
+    get iterNum() { return iterNum; },
+    sim_res_x, sim_res_y, NUM_DROPLETS, guiControls, gl,
+    canvasSize : [ canvas.width, canvas.height ],
+    startSimulation,
+
+    // texture indices: 0 = previous iteration, 1 = current, 2 = the other water
+    _fbo : null,
+    readTexture(index, type) {
+      let tex = index == 0 ? baseTexture_0 : index == 3 ? waterTexture_0 : waterTexture_1;
+      if (type == 'int') tex = index == 0 ? wallTexture_0 : wallTexture_1;
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const w = sim_res_x, h = sim_res_y;
+      const out = type == 'int' ? new Int8Array(w * h * 4) : new Float32Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, type == 'int' ? gl.RGBA_INTEGER : gl.RGBA, type == 'int' ? gl.BYTE : gl.FLOAT, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+      return out;
+    },
+    uploadWater(arr, which) {
+      const data = arr instanceof Float32Array ? arr : new Float32Array(arr);
+      const list = which == 0 ? [ waterTexture_0 ] : which == 1 ? [ waterTexture_1 ] : [ waterTexture_0, waterTexture_1 ];
+      for (const tex of list) {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sim_res_x, sim_res_y, gl.RGBA, gl.FLOAT, data);
+      }
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    },
+    uploadWall(arr, which) {
+      const data = arr instanceof Int8Array ? arr : new Int8Array(arr);
+      const list = which == 0 ? [ wallTexture_0 ] : which == 1 ? [ wallTexture_1 ] : [ wallTexture_0, wallTexture_1 ];
+      for (const tex of list) {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sim_res_x, sim_res_y, gl.RGBA_INTEGER, gl.BYTE, data);
+      }
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    },
+    readDropletsFrom(i) {
+      const out = new Float32Array(NUM_DROPLETS * 5);
+      gl.bindBuffer(gl.ARRAY_BUFFER, i == 0 ? precipVertexBuffer_0 : precipVertexBuffer_1);
+      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, out);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      return out;
+    },
+    // the droplet buffer the display is currently drawing from
+    currentDroplets() { return this.readDropletsFrom(destDisplayVAO == precipDisplayVao_1 ? 1 : 0); },
+    activeDroplets(which) {
+      const arr = this.readDropletsFrom(which);
+      let rain = 0, snow = 0, mixed = 0, maxMass = 0, maxDrop = 0;
+      for (let i = 0; i < NUM_DROPLETS; i++) {
+        const m = arr[i * 5 + 2];
+        if (m < 0) continue;
+        const ice = arr[i * 5 + 4];
+        if (ice > maxDrop) maxDrop = ice;
+        if (ice <= 0.) rain++; else if (ice >= 1.) snow++; else mixed++;
+        if (m > maxMass) maxMass = m;
+      }
+      return { total : NUM_DROPLETS, active : rain + snow + mixed, rain, snow, mixed, maxMass, maxDrop };
+    },
+    setDroplets(fill) {
+      const arr = new Float32Array(NUM_DROPLETS * 5);
+      for (let i = 0; i < NUM_DROPLETS; i++) {
+        const x = (i + 0.5) / NUM_DROPLETS, y = 0.2 + 0.6 * ((i * 7919) % 1000) / 1000.;
+        let px = x, py = y, ice = 0.0, dens = 0.0;
+        let m = typeof fill == 'function' ? fill(x, y, i) : fill;
+        if (Array.isArray(m)) { px = m[0]; py = m[1]; m = m[2]; ice = m[3] || 0.0; dens = m[4] || 0.0; }
+        if (typeof m != 'number' || !isFinite(m)) throw new Error('setDroplets: fill(' + x + ',' + y + ',' + i + ') did not return a finite mass');
+        arr[i * 5 + 0] = px; arr[i * 5 + 1] = py;
+        arr[i * 5 + 2] = m; arr[i * 5 + 3] = ice; arr[i * 5 + 4] = dens;
+      }
+      for (const buf of [ precipVertexBuffer_0, precipVertexBuffer_1 ]) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, arr);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      guiControls.inactiveDroplets = 0;
+      return arr.length;
+    },
+    prepareDownload,
+    get precipDisplayProgram() { return precipDisplayProgram; },
+    displayDiag() {
+      const out = { linkStatus : gl.getProgramParameter(precipDisplayProgram, gl.LINK_STATUS), programLog : gl.getProgramInfoLog(precipDisplayProgram) };
+      gl.useProgram(precipDisplayProgram);
+      out.attribs = {};
+      for (let i = 0; i < 4; i++) {
+        const loc = gl.getAttribLocation(precipDisplayProgram, [ 'a_quadCoord', 'dropPosition', 'mass', 'density' ][i]);
+        out.attribs[[ 'a_quadCoord', 'dropPosition', 'mass', 'density' ][i]] = loc;
+      }
+      out.uniforms = {};
+      for (const u of [ 'aspectRatios', 'view', 'canvasSize', 'wrapShift', 'texelSize' ]) out.uniforms[u] = gl.getUniformLocation(precipDisplayProgram, u) != null;
+      out.uniformValues = { view : Array.from(gl.getUniform(precipDisplayProgram, out.uniforms.view ? gl.getUniformLocation(precipDisplayProgram, 'view') : null) || []),
+                             canvasSize : Array.from(gl.getUniform(precipDisplayProgram, gl.getUniformLocation(precipDisplayProgram, 'canvasSize')) || []),
+                             aspectRatios : Array.from(gl.getUniform(precipDisplayProgram, gl.getUniformLocation(precipDisplayProgram, 'aspectRatios')) || []) };
+      gl.bindVertexArray(destDisplayVAO);
+      out.attribBindings = [];
+      for (let i = 0; i < 4; i++) {
+        const a = gl.getVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_ENABLED);
+        out.attribBindings.push({ enabled : a, size : gl.getVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_SIZE), divisor : gl.getVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_DIVISOR), stride : gl.getVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_STRIDE) });
+      }
+      out.destDisplayIsVao1 = destDisplayVAO == precipDisplayVao_1;
+      out.showDrops = guiControls.showDrops;
+      out.state = { blend : gl.isEnabled(gl.BLEND), scissorTest : gl.isEnabled(gl.SCISSOR_TEST), scissorBox : Array.from(gl.getParameter(gl.SCISSOR_BOX)), viewport : Array.from(gl.getParameter(gl.VIEWPORT)), framebuffer : gl.getParameter(gl.FRAMEBUFFER_BINDING), error : gl.getError(), cull : gl.isEnabled(gl.CULL_FACE), depthTest : gl.isEnabled(gl.DEPTH_TEST), colorMask : Array.from(gl.getParameter(gl.COLOR_WRITEMASK)) };
+      // manual draw straight into the canvas and read it back
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.disable(gl.SCISSOR_TEST);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(precipDisplayProgram);
+      gl.uniform2f(gl.getUniformLocation(precipDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
+      gl.uniform3f(gl.getUniformLocation(precipDisplayProgram, 'view'), cam.viewX, cam.viewY, cam.curZoom);
+      gl.uniform2f(gl.getUniformLocation(precipDisplayProgram, 'canvasSize'), canvas.width, canvas.height);
+      gl.uniform1f(gl.getUniformLocation(precipDisplayProgram, 'wrapShift'), 0.0);
+      gl.bindVertexArray(destDisplayVAO);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, NUM_DROPLETS);
+      out.manualError = gl.getError();
+      const px = new Uint8Array(canvas.width * canvas.height * 4);
+      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let lit = 0;
+      for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] > 240) lit++;
+      out.manualLitPixels = lit;
+      out.manualCanvasSize = [ canvas.width, canvas.height, canvas.clientWidth, canvas.clientHeight ];
+      return out;
+    },
+    renderFpsProbe(frames) { return new Promise(resolve => { let n = 0; const t0 = performance.now(); const tick = () => { if (++n >= frames) resolve(1000 * frames / (performance.now() - t0)); else requestAnimationFrame(tick); }; requestAnimationFrame(tick); }); },
+  };
