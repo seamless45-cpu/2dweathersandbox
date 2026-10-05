@@ -31,7 +31,7 @@ await page.evaluate(() => {
   s.guiControls.auto_IterPerFrame = false; s.guiControls.IterPerFrame = 1;
   s.guiControls.showDrops = false;
   s.guiControls.brushIntensity = 0.05; s.guiControls.brushSize = 120;
-  s.guiControls.landEvaporation = 0.0002; // slider maximum
+  s.guiControls.landEvaporation = 0.01; // slider maximum (was 0.0002 before PR #17 recalibrated it)
 });
 
 const box = await page.evaluate(() => { const r = document.getElementById('mainCanvas').getBoundingClientRect(); return { w : r.width, h : r.height }; });

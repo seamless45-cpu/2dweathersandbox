@@ -27,6 +27,7 @@ uniform float IR_rate;
 
 uniform float greenhouseGases;
 uniform float waterGreenHouseEffect;
+uniform float waterTemperature; // configured temperature of lake / sea surfaces, in Kelvin
 
 layout(location = 0) out vec4 light;
 layout(location = 1) out vec4 reflectedLight;
@@ -49,11 +50,13 @@ uniform float dryLapse;
 float airEmissivity(vec4 waterSample, float heightComp)
 {
   float emissivity = greenhouseGases;                          // greenhouse gasses
-  emissivity += waterSample[TOTAL] * waterGreenHouseEffect;    // water vapor
-  emissivity += waterSample[CLOUD] * 5.0;                      // cloud water blocks all IR
+  emissivity += max(waterSample[TOTAL], 0.0) * waterGreenHouseEffect; // water vapor (wall indicators also make terrain opaque, as they should)
+  emissivity += max(waterSample[CLOUD], 0.0) * 5.0;            // cloud water blocks all IR
                                                                // smoke is mostly transparent to IR
   emissivity *= heightComp;                                    // compensate for the height of the cell
 
+  if (!(emissivity == emissivity)) // NaN, because a cell contained a corrupted water value
+    return 1.0;                  // treat it as opaque instead of letting NaN into the heating of the air
   return min(emissivity, 1.0);                                 // limit to 1.0
 }
 
@@ -61,18 +64,34 @@ float airEmissivity(vec4 waterSample, float heightComp)
 // transmittance of the column is (1 - e)^numCells
 float columnOpacity(float e, float numCells) { return 1.0 - pow(max(1.0 - e, 0.0), numCells); }
 
-// Real (not potential) air temperature at any texCoord
-float airTempAt(vec2 tc) { return potentialToRealT(texture(baseTex, tc)[TEMPERATURE], tc.y); }
+// Real (not potential) air temperature at any texCoord, limited to the physical range so that a
+// corrupted cell can never emit an infinite amount of longwave radiation
+float airTempAt(vec2 tc) { return cleanTempK(potentialToRealT(texture(baseTex, tc)[TEMPERATURE], tc.y)); }
 
 // Surfaces radiate like black bodies (emissivity = 1.0) at their own temperature.
-// Wall cells store their real temperature directly in baseTex.
-float surfaceEmission(ivec4 wallSample, vec2 tc)
+// Only water surfaces actually store their real temperature in baseTex: every other wall type
+// stores the 1000.0 "no snow melt" indicator that the pressure shader reads (see advectionShader),
+// which is NOT a temperature. Radiating that as a black body means 56 MW/m², which cooled the
+// entire boundary layer by ~0.1 K per iteration until the temperature went below absolute zero.
+// maxWater() turns into NaN at negative temperatures, so that is a vapor explosion: the skin
+// temperature of dry surfaces is therefore taken from the air cell next to them, like before the
+// IR rework, and everything is limited to the physical range afterwards.
+float surfaceSkinTemp(ivec4 wallSample, vec2 wallTC, vec2 airTC)
 {
-  float T = texture(baseTex, tc)[TEMPERATURE];
+  if (wallSample[TYPE] == WALLTYPE_WATER) {
+    float T = texture(baseTex, wallTC)[TEMPERATURE]; // real water temperature in Kelvin
+    if (!(T > 100.0) || T > 500.0)                   // NaN or the wall indicator of older save files
+      T = waterTemperature;                          // fall back to the configured water temperature
+    return cleanTempK(T);
+  }
+
+  float T = potentialToRealT(texture(baseTex, airTC)[TEMPERATURE], airTC.y); // the air just above/below the surface
   if (wallSample[TYPE] == WALLTYPE_FIRE)
     T += 100.0; // fire emits extra heat
-  return IR_emitted(T);
+  return cleanTempK(T);
 }
+
+float surfaceEmission(ivec4 wallSample, vec2 wallTC, vec2 airTC) { return IR_emitted(surfaceSkinTemp(wallSample, wallTC, airTC)); }
 // ========================================================================
 
 void main()
@@ -89,7 +108,7 @@ void main()
     float sunlight = texture(lightTex, texCoord + sunRay)[SUNLIGHT];
     // float sunlight = bilerp(lightTex, fragCoord + vec2(sin(sunAngle) ,
 
-    float realTemp = potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE]);
+    float realTemp = cleanTempK(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE]));
     vec4 water = texture(waterTex, texCoord);
     ivec4 wall = texture(wallTex, texCoord);
 
@@ -133,7 +152,7 @@ void main()
       float IR_down;
 
       if (texture(wallTex, tcUp)[DISTANCE] == 0) { // a surface / ceiling is within IR_STEP cells above
-        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp);
+        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp, tcUp - vec2(0.0, texelSize.y)); // the air cell right below the ceiling
       } else {
         float eMid = airEmissivity(texture(waterTex, tcUpMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));
@@ -150,7 +169,7 @@ void main()
         float eLocal = airEmissivity(water, cellHeightCompensation);
         float cellsToSurface = clamp(float(wall[VERT_DISTANCE] - 1), 0.0, float(IR_STEP)); // air cells in between
         float tau = columnOpacity(eLocal, cellsToSurface);
-        IR_up = mix(surfaceEmission(wallBelowFar, tcDn), IR_emitted(realTemp), tau);
+        IR_up = mix(surfaceEmission(wallBelowFar, tcDn, tcDn + vec2(0.0, texelSize.y)), IR_emitted(cleanTempK(realTemp)), tau); // the air cell right above the ground
       } else {
         float eMid = airEmissivity(texture(waterTex, tcDnMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));
@@ -188,7 +207,7 @@ void main()
         // re-emit at this cell's own temperature (Stefan-Boltzmann)
         float emissivity = airEmissivity(water, cellHeightCompensation);
 
-        float emitted = IR_emitted(realTemp) * emissivity; // this amount is emitted both up and down
+        float emitted = IR_emitted(cleanTempK(realTemp)) * emissivity; // this amount is emitted both up and down
 
         net_heating += ((IR_down + IR_up) * emissivity - emitted * 2.0) * lightHeatingConst;
       }
