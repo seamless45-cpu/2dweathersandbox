@@ -451,7 +451,12 @@ void main()
     color = getWallColor(depth);
 
     lightIntensity = texture(lightTex, vec2(texCoord.x, texelSize.y))[0] / standardSunBrightness; // sample lowest part of sim area
-    lightIntensity *= pow(0.5, -fragCoord.y);                                                     // 0.5 should be same as in lightingshader deeper is darker
+    // Sunlight is attenuated as it soaks into the ground (0.5 per cell, as in the lighting
+    // shader). That is a factor of a thousand within ten cells, and a cell is a few pixels at
+    // the default zoom, so this band went to pure black (measured 10/255) and read as a hole in
+    // the world rather than as a cross-section of earth. The floor keeps it clearly unlit while
+    // still showing the soil it is supposed to be.
+    lightIntensity *= max(pow(0.5, -fragCoord.y), 0.06);
 
   } else if (texCoord.y > 1.0) {                                                                  // above simulation area
     // color = vec3(0); // no need to set
@@ -873,7 +878,10 @@ void main()
     onLight += ambientLight * ambientGroundFactor;
     onLight = min(onLight, vec3(0.30));    // skylight never bridges the gap to direct sunlight
   } else {
-    onLight += ambientLight * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
+    // Below the simulation area: skylight that has soaked into the soil, fading with depth to a
+    // floor. The old ramp (pow(1 - d, 2.5)) collapsed to a few per mille within a fifth of a
+    // cell below the boundary, which combined with the sun term above to make the band black.
+    onLight += ambientLight * (0.20 + 0.60 * (1. - clamp(-texCoord.y * 8., 0., 1.)));
   }
 
 

@@ -10,6 +10,7 @@ Headless regression tests for the two bugs fixed in this branch:
 | `shot_default.mjs` | screenshots the default view: default preset, no brushes, fixed sun angle, after N iterations. This is the scene a brightness, haze or sharpness report is about. |
 | `fps_probe.mjs` | measures render FPS in a given camera and display state, so removing an effect can be judged by numbers (`ZOOM`, `CAMY`, `SUNANGLE`, `MODE`, `ITERS`). |
 | `test_visual.mjs` | screenshots a vegetated coast a few hundred iterations in (`SUNANGLE`, `ZOOM`, `SHOWDROPS`). |
+| `test_smoke.mjs` | loads the page, starts a simulation, cycles every display mode, toggles the overlays, tools, pause, day/night and resizes, then reports every console error, page error and failed request. |
 
 ## Running
 
