@@ -447,7 +447,6 @@ const guiControls_default = {
   displayMode : 'DISP_REAL',
   wrapHorizontally : true,
   SmoothCam : true,
-  cameraShake : true,
   camSpeed : 0.01,
   exposure : 1.0,
   timeOfDay : 9.9,
@@ -1798,13 +1797,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     #Yvel;
     #Zvel;
 
-    // ── reworked camera shake: high frequency random offset shaking ──
-    #shakeStart = -1e12;   // ms timestamp when the shake was triggered
-    #shakeDuration = 1000; // ms (default: 1 second)
-    #shakeIntensity = 0;   // peak offset in screen pixels
-    shakeOffsetX = 0;      // view offset (world units) applied during rendering this frame
-    shakeOffsetY = 0;
-
     constructor()
     {
       this.curXpos = 0;
@@ -1912,73 +1904,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       }
     }
 
-    // ── reworked camera shake ──
-    // intensityPx: peak random offset in screen pixels. duration: 1 second by default.
-    startShake(intensityPx, durationMs = 1000)
-    {
-      if (intensityPx < 0.5)
-        return;
-      const now = performance.now();
-      // never let a weaker strike cut short a stronger ongoing shake
-      this.#shakeIntensity = Math.max(intensityPx, this.#shakeAmplitudePx(now));
-      this.#shakeStart = now;
-      this.#shakeDuration = durationMs;
-    }
-
-    // shake intensity falls off with how close the lightning strike was
-    shakeFromLightning(strikeX, strikeIntensity)
-    {
-      let camXnorm = 1. - (this.curXpos + 1.0) / 2.0;
-
-      let camDistFromSim = cellHeight * sim_res_x * 0.5 / this.curZoom; // asuming 90° HFOV
-
-      let camHorDistFromStrike = (strikeX - camXnorm) * cellHeight * sim_res_x;
-
-      let distance = Math.hypot(camDistFromSim, camHorDistFromStrike);
-
-      const maxShakeDistance = 20000; // meters; further away nothing is felt
-      let proximity = clamp(1.0 - distance / maxShakeDistance, 0.0, 1.0);
-
-      let intensityPx = 24.0 * proximity * proximity * clamp(strikeIntensity, 0.5, 2.5);
-
-      this.startShake(intensityPx, 1000); // duration: 1 second
-    }
-
-    #shakeAmplitudePx(now)
-    {
-      const elapsed = now - this.#shakeStart;
-      if (elapsed >= this.#shakeDuration)
-        return 0;
-      return this.#shakeIntensity * (1.0 - elapsed / this.#shakeDuration); // linear decay
-    }
-
-    // pick a fresh random offset every frame -> high frequency shaking
-    updateShake()
-    {
-      const ampPx = this.#shakeAmplitudePx(performance.now());
-      if (ampPx <= 0) {
-        this.shakeOffsetX = 0;
-        this.shakeOffsetY = 0;
-        return;
-      }
-      const px = (Math.random() * 2.0 - 1.0) * ampPx;
-      const py = (Math.random() * 2.0 - 1.0) * ampPx;
-      // convert screen pixels to view (world) units
-      this.shakeOffsetX = (px * 2.0) / (canvas.width * this.curZoom);
-      this.shakeOffsetY = (py * 2.0) / (canvas.height * this.curZoom * canvas_aspect);
-    }
-
-    stopShake()
-    {
-      this.#shakeStart = -1e12;
-      this.#shakeIntensity = 0;
-      this.shakeOffsetX = 0;
-      this.shakeOffsetY = 0;
-    }
-
-    // camera position including the shake offset, for the rendering 'view' uniforms
-    get viewX() { return this.curXpos + this.shakeOffsetX; }
-    get viewY() { return this.curYpos + this.shakeOffsetY; }
+    // camera position, for the rendering 'view' uniforms
+    get viewX() { return this.curXpos; }
+    get viewY() { return this.curYpos; }
   }
 
   cam = new Camera();
@@ -4170,8 +4098,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     display_folder.add(guiControls, 'SmoothCam').onChange(function() { cam.smooth = guiControls.SmoothCam; }).name('Smooth Camera');
 
-    display_folder.add(guiControls, 'cameraShake').name('Camera Shake');
-
     display_folder.add(guiControls, 'showGraph').onChange(hideOrShowGraph).name('Show Sounding Graph').listen();
     display_folder.add(guiControls, 'showDrops').name('Show Droplets').listen();
     display_folder.add(guiControls, 'realDewPoint').name('Show Real Dew Point');
@@ -5976,7 +5902,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
 
     initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
-    initial_W[y] = maxWater(CtoK(realTemp) + (y < sim_res_y * 0.35 ? 2.0 : -6.0)); // moist near-surface boundary layer (matches setupShader.frag)
+    initial_W[y] = maxWater(CtoK(realTemp) + (y < sim_res_y * 0.60 ? 5.0 : -2.0)); // strongly-saturated layer, tall (matches setupShader.frag)
   }
 
   // generate sounding data for forcing in sim
@@ -6302,7 +6228,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
 
     cam.move();
-    cam.updateShake();
 
     prevMouseXinSim = mouseXinSim;
     prevMouseYinSim = mouseYinSim;
@@ -6582,17 +6507,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
               gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-              if (guiControls.sound || guiControls.cameraShake) {
+              if (guiControls.sound) {
                 gl.readBuffer(gl.COLOR_ATTACHMENT0);
                 var lightningDataValues = new Float32Array(4);
                 gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
                 // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
                 if (Math.round(lightningDataValues[2]) == iterNum) {
-                  if (guiControls.sound)
-                    soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
-                  if (guiControls.cameraShake)
-                    cam.shakeFromLightning(lightningDataValues[0], Math.pow(lightningDataValues[3], 2.0));
+                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
                 }
               }
             }

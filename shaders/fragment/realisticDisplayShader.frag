@@ -199,7 +199,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 5.0; // 30.0    0. to 1. leader stage, 1. + Flash stage
+  return lightningTime / 5.0; // 0. to 1. leader stage, 1. + Flash stage
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
@@ -405,26 +405,33 @@ vec4 getAirColor(vec2 fragCoordIn)
   float lightningTime = calcLightningTime(lightningStartIterNum);
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
-
   if (lightningData[INTENSITY] > 1.0) { // CG
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity);
+    // The bolt channel, dimmed by the cloud it strikes through (the channel is partly obscured
+    // by the deck it passes through, but the bolt is HDR-bright so it still reads as a line).
+    float cloudDim = 1.0 / (1.0 + cloudDensity * 12.0);
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * cloudDim;
 
-    // The strike also floods the sky with a brief, broad wash of bluish-white light. This used
-    // to come for free from the screen bloom, which spread the bolt's HDR core across the whole
-    // view; with bloom removed the thin bolt alone was nearly invisible, so a strike "never
-    // flashed". Drive the wash from the same flicker envelope so it pulses with the return
-    // stroke. Added before the cloud-density division so thick cloud dims it, as it should.
-    if (lightningTime > 1.0)
-      emittedLight += vec3(0.72, 0.78, 1.0) * currentLightningIntensity * 20.0;
-
-    emittedLight /= 1. + cloudDensity * 100.0;
+    // Position-based return-stroke flash: brightest at the bolt, radiating out as a broad
+    // bluish-white glow with a tight hot core. A real strike LIGHTS UP the cloud it is in (the
+    // deck glows), so the flash is NOT suppressed by the local cloud density — it only falls off
+    // with distance from the strike and flickers with the return-stroke envelope. Because scene
+    // opacity follows emittedLight, the sky itself glows only near the strike, localised like
+    // a real flash rather than a flat full-screen wash.
+    if (lightningTime > 1.0) {
+      vec2 fpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
+      fpos.x *= aspectRatios[0];
+      float fd = length(fpos);
+      float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core hugging the bolt
+      float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // broad sky glow, falls off with distance
+      emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow);
+    }
   }
 
-#define lightningOnLightBrightness 0.004 // 0.002
+#define lightningOnLightBrightness 0.020 // 0.004 : bright enough to briefly light up the scene
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
-  float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.03);
+  float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.05);
   lightningOnLight *= currentLightningIntensity;
   onLight += vec3(lightningOnLight);
 

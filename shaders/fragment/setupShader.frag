@@ -90,10 +90,10 @@ void main()
 
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
-    if (texCoord.y < 0.35) // moist, nearly-saturated boundary layer so a real cloud deck
-      water[TOTAL] = maxWater(realTemp + 2.0);  // exists from the start and has fuel to grow
+    if (texCoord.y < 0.60) // deep, strongly-saturated layer so a substantial cloud deck
+      water[TOTAL] = maxWater(realTemp + 5.0);  // exists from the start and has fuel to grow tall
     else
-      water[TOTAL] = maxWater(realTemp - 6.0);  // moisture aloft lets the cloud develop upward
+      water[TOTAL] = maxWater(realTemp - 2.0);  // only slightly sub-saturated aloft, lets it grow upward
 
     // maxWater() is capped and NaN proof, so the initial state can be saturated without the first
     // condensation boiling the cell and starting a vapor explosion
