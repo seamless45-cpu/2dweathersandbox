@@ -38,7 +38,9 @@ void main()
   // Replicate that size in clip space for the instanced quad. The corner
   // coordinate already runs from -1 to 1, so one multiplication covers the
   // full sprite diameter.
-  float sizePx = view[2] * 4.0 / aspectRatios[0];
+  // 4.0 -> 2.8: shrinks the drop sprite by ~30% so a dense field reads as
+  // fine rain instead of a blanket of large overlapping blobs.
+  float sizePx = view[2] * 2.8 / aspectRatios[0];
   // Convert pixel size to clip-space size on each axis; divide Y by the canvas
   // aspect ratio so the sprite stays circular on non-square viewports.
   vec2 quadOffset = a_quadCoord * vec2(sizePx / canvasSize.x, sizePx / canvasSize.y);

@@ -22,6 +22,42 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
       return out;
     },
+    // read the 1x1 texture holding the current lightning strike: [x, y, startIterNum, intensity]
+    readLightning() {
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightningDataTexture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const out = new Float32Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+      return out;
+    },
+    // stats of the current bolt image texture (is it generated / non-black?)
+    lightningTexStats() {
+      const tex = lightningTextures[0];
+      const w = 512, h = 1024;
+      const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const out = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      let max = 0, nonzero = 0;
+      for (let i = 0; i < out.length; i += 4) { if (out[i] > max) max = out[i]; if (out[i] > 0) nonzero++; }
+      return { max, nonzero, w, h };
+    },
+    // force a lightning strike into the 1x1 texture: [x, y, startIterNum, intensity]
+    writeLightning(x, y, startIterNum, intensity) {
+      gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([x, y, startIterNum, intensity]));
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    },
     uploadWater(arr, which) {
       const data = arr instanceof Float32Array ? arr : new Float32Array(arr);
       const list = which == 0 ? [ waterTexture_0 ] : which == 1 ? [ waterTexture_1 ] : [ waterTexture_0, waterTexture_1 ];

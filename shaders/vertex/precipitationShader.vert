@@ -132,39 +132,41 @@ void main()
         spawned = true;
         newPos = vec2((texCoord.x - 0.5) * 2., (texCoord.y - 0.5) * 2.); // convert texture coordinate (0 to 1) to position (-1 to 1)
 
-        if (realTemp < CtoK(0.0)) {                                      // below 0 C
-          newMass[WATER] = 0.0;                                          // enable
-          newMass[ICE] = initalMass;                                     // snow
-          feedback[HEAT] += newMass[ICE] * meltingHeat;                  // add heat of freezing
+        // A lightning strike can form in any dense storm cell, whether it is raining or snowing.
+        // The old code only rolled for it inside the below-zero branch, so a warm thunderstorm
+        // (the common case) never flashed at all.
+        vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
+
+        const float lightningCloudDensityThreshold = 1.0;          // matches the droplet-spawn threshold so dense stratus can still flash
+        const float lightningChanceMultiplier = 0.2;                // higher multiplier makes eligible clouds strike more often
+
+        float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
+
+        float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
+
+        const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
+
+        if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
+            random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
+          lightningSpawned = true;
+          isActive = false;
+          gl_PointSize = 1.0;
+          feedback.xy = texCoord;
+          feedback[START_ITERNUM] = iterNum;
+          feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
+          gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
+        } else if (realTemp < CtoK(0.0)) {                            // below 0 C
+          newMass[WATER] = 0.0;
+          newMass[ICE] = initalMass;                                  // snow
+          feedback[HEAT] += newMass[ICE] * meltingHeat;              // add heat of freezing
           newDensity = snowDensity;
-
-          vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
-
-          const float lightningCloudDensityThreshold = 1.2;          // lower threshold makes storm clouds eligible sooner
-          const float lightningChanceMultiplier = 0.125;              // higher multiplier makes eligible clouds strike more often
-
-          float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
-
-          float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
-
-          const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
-
-          if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
-              random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
-            lightningSpawned = true;
-            isActive = false;
-            gl_PointSize = 1.0;
-            feedback.xy = texCoord;
-            feedback[START_ITERNUM] = iterNum;
-            feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
-            gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
-          }
+          feedback[VAPOR] -= initalMass;
         } else {
           newMass[WATER] = initalMass; // rain
           newMass[ICE] = 0.0;
           newDensity = 1.0;
+          feedback[VAPOR] -= initalMass;
         }
-        feedback[VAPOR] -= initalMass;
       }
     }
 

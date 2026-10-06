@@ -408,6 +408,15 @@ vec4 getAirColor(vec2 fragCoordIn)
 
   if (lightningData[INTENSITY] > 1.0) { // CG
     emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity);
+
+    // The strike also floods the sky with a brief, broad wash of bluish-white light. This used
+    // to come for free from the screen bloom, which spread the bolt's HDR core across the whole
+    // view; with bloom removed the thin bolt alone was nearly invisible, so a strike "never
+    // flashed". Drive the wash from the same flicker envelope so it pulses with the return
+    // stroke. Added before the cloud-density division so thick cloud dims it, as it should.
+    if (lightningTime > 1.0)
+      emittedLight += vec3(0.72, 0.78, 1.0) * currentLightningIntensity * 20.0;
+
     emittedLight /= 1. + cloudDensity * 100.0;
   }
 
@@ -446,9 +455,20 @@ void main()
 
   if (texCoord.y < 0.) {                                     // < texelSize.y below simulation area
 
-    float depth = float(-wall[VERT_DISTANCE]) - fragCoord.y; // -1.0?
+    float depth = float(-wall[VERT_DISTANCE]) - fragCoord.y; // cells below the surface
 
-    color = getWallColor(depth);
+    if (wall[TYPE] == WALLTYPE_WATER) {
+      // Underwater: continue the sea's Beer-Lambert water volume (shallow turquoise fading to
+      // deep blue with depth) instead of the terrain cross-section. getWallColor's per-column
+      // relief shading and depth banding (bedrock/snow transitions) tile across the region and
+      // read as a grid over the whole water body; real open water is a smooth, darkening volume.
+      float shallow = exp(-max(depth, 0.0) * 0.55);
+      const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA));
+      const vec3 deepCol = pow(vec3(0.02, 0.06, 0.15), vec3(GAMMA));
+      color = mix(deepCol, shallowCol, shallow);
+    } else {
+      color = getWallColor(depth);
+    }
 
     lightIntensity = texture(lightTex, vec2(texCoord.x, texelSize.y))[0] / standardSunBrightness; // sample lowest part of sim area
     // Sunlight is attenuated as it soaks into the ground (0.5 per cell, as in the lighting

@@ -44,7 +44,7 @@ uniform float dryLapse;
 // The whole atmospheric column therefore converges to radiative equilibrium
 // in roughly resolution.y / IR_STEP iterations, and the fluxes also react
 // IR_STEP times faster to changing temperatures, clouds and surfaces.
-#define IR_STEP 8
+#define IR_STEP 1
 
 // How opaque one air cell is to longwave radiation (Kirchhoff: emissivity == absorptivity)
 float airEmissivity(vec4 waterSample, float heightComp)

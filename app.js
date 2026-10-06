@@ -431,7 +431,7 @@ const guiControls_default = {
   waterEvaporation : 0.001,
   evapHeat : 2.90,          //  Real: 2260 J/g
   meltingHeat : 0.43,       //  Real:  334 J/g
-  condensationRate : 0.0050,
+  condensationRate : 0.005,
   waterWeight : 0.25,       // 0.50
   inactiveDroplets : 0,
   aboveZeroThreshold : 1.0, // PRECIPITATION
@@ -472,7 +472,7 @@ const guiControls_default = {
   IterPerFrame : 10,
   auto_IterPerFrame : true,
   sound : true,
-  dryLapseRate : 10.0,     // Real: 9.8 degrees / km
+  dryLapseRate : 10.0,     // Real: 9.8 degrees / km. 10 is the neutral dry-adiabatic lapse rate.
   simHeight : 12000,       // meters
   twelveHourClock : false, // only for display.  false = metric
   lengthUnit : 'LENGTH_UNIT_METRIC',
@@ -5976,7 +5976,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
 
     initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
-    initial_W[y] = maxWater(CtoK(realTemp) - (y < sim_res_y * 0.2 ? 2.0 : 20.0)); // near the dew point of the initial profile, like setupShader.frag does
+    initial_W[y] = maxWater(CtoK(realTemp) + (y < sim_res_y * 0.35 ? 2.0 : -6.0)); // moist near-surface boundary layer (matches setupShader.frag)
   }
 
   // generate sounding data for forcing in sim
