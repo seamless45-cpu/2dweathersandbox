@@ -547,6 +547,14 @@ void main()
       const float surfaceLightSampleHeight = 5.5; // cells above the surface
       float surfaceLightCoordY = texCoord.y + (float(-wall[VERT_DISTANCE]) + surfaceLightSampleHeight) * texelSize.y;
       lightIntensity = texture(lightTex, vec2(texCoord.x, clamp(surfaceLightCoordY, 0.0, 1.0)))[0] / standardSunBrightness;
+    } else {
+      // Water: the surface is exactly at this cell's top, so take the sunlight from the air cell
+      // just above the surface. This keeps a cloud's shadow honest on open water — sampling the
+      // bilerped value at the water cell blended neighbouring columns and let a shadow from one
+      // side bleed across a headland onto water that should stay lit (and vice versa), which read
+      // as shadows "piercing" through the land and water.
+      float waterSurfaceLightY = clamp(texCoord.y + texelSize.y, 0.0, 1.0);
+      lightIntensity = texture(lightTex, vec2(texCoord.x, waterSurfaceLightY))[0] / standardSunBrightness;
     }
 
     switch (wall[TYPE]) {
