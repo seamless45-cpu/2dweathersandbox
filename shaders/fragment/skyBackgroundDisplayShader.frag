@@ -136,13 +136,13 @@ void main()
   // Rayleigh-like vertical falloff: steep blue overhead, lighter towards horizon
   float skyHeight = pow(height01, 0.55);
 
-  // linear-space sky colours. These are a good deal darker and more saturated than the pale
-  // grey-blue the previous pass used: the old values came out at roughly (0.83, 0.90, 0.99) after
-  // tone mapping and gamma, i.e. an almost white sky, which is what made the whole scene read as
-  // overexposed no matter what the terrain did.
-  const vec3 zenithCol = vec3(0.02, 0.07, 0.26);
-  const vec3 midSkyCol = vec3(0.10, 0.26, 0.58);
-  const vec3 horizonCol = vec3(0.22, 0.42, 0.72);
+  // linear-space sky colours. Reworked to read as a deeper, more saturated real sky rather
+  // than a washed-out pale blue: a darker, more saturated zenith (deep air mass overhead),
+  // a richer mid band, and a horizon that keeps its blue (a real horizon is not white — the
+  // previous near-pale values washed out against the bright sunlight the sky is multiplied by).
+  const vec3 zenithCol = vec3(0.010, 0.042, 0.20);
+  const vec3 midSkyCol = vec3(0.045, 0.160, 0.44);
+  const vec3 horizonCol = vec3(0.130, 0.300, 0.60);
 
   // Three-stop gradient for richer sky colour
   vec3 mixedCol;
@@ -162,10 +162,10 @@ void main()
   vec3 mieCol = vec3(0.95, 0.90, 0.80); // warm white
   mixedCol += mieCol * mieLobe;
 
-  // Aerial haze near the horizon: a hint of the horizon colour, not a white-out. This used to
-  // push 85% of the horizon band towards a colour that was already nearly white.
-  float haze = pow(1.0 - height01, 8.0);
-  mixedCol = mix(mixedCol, horizonCol, haze * 0.45);
+  // Aerial haze near the horizon: a gentle hint of the horizon colour, not a white-out. Kept
+  // restrained so the lower band keeps its blue instead of washing out against the sunlight.
+  float haze = pow(1.0 - height01, 9.0);
+  mixedCol = mix(mixedCol, horizonCol, haze * 0.38);
 
   // The sky takes the colour of the sunlight, so at sunrise and sunset it reddens
   float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0.0, 1.0), 0.0, 1.0);

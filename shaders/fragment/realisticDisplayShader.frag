@@ -277,28 +277,28 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
     currentLightningIntensity *= leaderBrightness;
   }
 
-  float texVal = pixVal; // keep the raw bolt field so the glow can use a wider footprint
+  float texVal = pixVal; // keep the raw bolt field so the branches/glow can use wider footprints
 
-  pixVal -= brightnessThreshold;
-  pixVal = max(pixVal, 0.0);
-  pixVal *= currentLightningIntensity;
-
-  const vec3 lightningCol = vec3(0.70, 0.57, 1.0); // 0.584, 0.576, 1.0
-
-  vec3 outputColor = max(pixVal * lightningCol, vec3(0));
-
-  // Diffuse corona: a real lightning channel is a bright line wrapped in a broad soft halo.
-  // Lower the threshold well below the line and apply a quadratic falloff so the whole bolt
-  // glows instead of reading as a thin wire.
-  // Bright, wide, soft corona so the whole bolt glows (an in-shader halo around the channel —
-  // deliberately not a post-process bloom). Lower the threshold well below the line and give it
-  // a broad, soft falloff so it reads as a glowing channel, not just a thin wire.
-  float glow = max(texVal - max(brightnessThreshold - 0.85, 0.0), 0.0);
+  // ── a real strike has three parts, all flicker-modulated ─────────────────────
+  // 1. the hot core channel (only the boldest line, tight threshold)
+  // 2. the branching leaders (thinner fractal branches, a lower threshold so they show)
+  // 3. the corona/halo (a broad soft glow, quadratic falloff — an in-shader halo,
+  //    deliberately not a post-process bloom)
+  float channelVal = max(texVal - brightnessThreshold, 0.0);
+  channelVal *= currentLightningIntensity;
+  float branchVal = max(texVal - max(brightnessThreshold - 0.40, 0.0), 0.0);
+  branchVal *= currentLightningIntensity * 0.45; // branches a touch dimmer than the core
+  float glow = max(texVal - max(brightnessThreshold - 0.95, 0.0), 0.0);
   glow *= glow;
-  glow *= currentLightningIntensity * 0.55;
-  outputColor += max(glow * vec3(0.60, 0.68, 1.0), vec3(0));
+  glow *= currentLightningIntensity * 0.85;
 
-  return outputColor;
+  // Real lightning is a bluish-white (nitrogen excitation), NOT violet/pink.
+  const vec3 lightningCol = vec3(0.82, 0.90, 1.00); // bluish-white core
+  const vec3 branchCol    = vec3(0.72, 0.82, 1.00); // bluish leaders
+  const vec3 glowCol      = vec3(0.55, 0.70, 1.00); // cool blue-white halo
+
+  vec3 outputColor = channelVal * lightningCol + branchVal * branchCol + glow * glowCol;
+  return max(outputColor, vec3(0));
 }
 
 

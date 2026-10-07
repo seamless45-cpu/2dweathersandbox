@@ -525,7 +525,7 @@ var dryLapse;
 const timePerIteration = 0.00008; // in hours (0.00008 = 0.288 sec, at 40m cell size that means the speed of light & sound = 138.88 m/s = 500 km/h)
 
 var NUM_DROPLETS;
-const NUM_DROPLETS_DEVIDER = 25; // 25
+const NUM_DROPLETS_DEVIDER = 1; // no divider — max droplets = full sim resolution
 
 let hdrFBO;
 
