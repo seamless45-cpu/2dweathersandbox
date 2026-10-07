@@ -290,10 +290,13 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   // Diffuse corona: a real lightning channel is a bright line wrapped in a broad soft halo.
   // Lower the threshold well below the line and apply a quadratic falloff so the whole bolt
   // glows instead of reading as a thin wire.
-  float glow = max(texVal - max(brightnessThreshold - 0.55, 0.0), 0.0);
+  // Bright, wide, soft corona so the whole bolt glows (an in-shader halo around the channel —
+  // deliberately not a post-process bloom). Lower the threshold well below the line and give it
+  // a broad, soft falloff so it reads as a glowing channel, not just a thin wire.
+  float glow = max(texVal - max(brightnessThreshold - 0.85, 0.0), 0.0);
   glow *= glow;
-  glow *= currentLightningIntensity * 0.10;
-  outputColor += max(glow * vec3(0.62, 0.70, 1.0), vec3(0));
+  glow *= currentLightningIntensity * 0.55;
+  outputColor += max(glow * vec3(0.60, 0.68, 1.0), vec3(0));
 
   return outputColor;
 }
@@ -423,9 +426,9 @@ vec4 getAirColor(vec2 fragCoordIn)
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
   if (lightningData[INTENSITY] > 1.0) { // CG
-    // The bolt channel, dimmed by the cloud it strikes through (the channel is partly obscured
-    // by the deck it passes through, but the bolt is HDR-bright so it still reads as a line).
-    float cloudDim = 1.0 / (1.0 + cloudDensity * 12.0);
+    // The bolt channel, only lightly dimmed by the cloud it strikes through — a real channel is
+    // HDR-bright and its glow is scattered light, so it should still read clearly inside the deck.
+    float cloudDim = 1.0 / (1.0 + cloudDensity * 3.0);
     emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * cloudDim;
 
     // Position-based return-stroke flash: brightest at the bolt, radiating out as a broad
