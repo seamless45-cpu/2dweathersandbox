@@ -444,6 +444,23 @@ vec4 getAirColor(vec2 fragCoordIn)
       float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core within the cloud
       float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // the deck glows from within
       emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask);
+
+      // ── intra-cloud arcs: thin, wavy sideways discharge channels ────────────────
+      // Real IC lightning is not just a vertical bolt — it has branching arcs that run
+      // horizontally through the deck between the cloud tops. A few thin, jagged channels
+      // radiate out from the strike point, fading with range, only where there is cloud.
+      vec2 apos = vec2(texCoord.x - lightningPos.x, texCoord.y - lightningPos.y);
+      apos.x *= aspectRatios[0];
+      float adist = length(apos);
+      float aradial = smoothstep(0.30, 0.02, adist); // fade with range from the strike
+      float awave = sin(apos.x * 55.0 + iterNum * 0.9) * 0.012 + sin(apos.y * 40.0 - iterNum * 0.7) * 0.008;
+      for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float baseY = (fi - 1.0) * 0.05;                 // three lanes: up, level, down
+        float lane = abs(apos.y - baseY + awave * (1.0 + fi * 0.5));
+        float arc = smoothstep(0.010, 0.0, lane) * (0.6 + 0.4 * sin(iterNum * 1.7 + fi * 2.1));
+        emittedLight += vec3(0.75, 0.85, 1.0) * currentLightningIntensity * arc * aradial * 1.6 * (0.10 + 0.90 * cloudMask);
+      }
     }
   }
 
