@@ -90,18 +90,20 @@ void main()
 
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
-    // No cloud at t=0: the air is moist but sub-saturated (a warm near-saturated boundary layer
-    // under drier air aloft). The deck has to condense from convection as the simulation runs, so
-    // the sky starts clear and the storm develops over time instead of appearing at load.
+    // No liquid cloud at t=0, but a SATURATED low boundary layer under drier air aloft. The air
+    // sits right at the dew point, so the very first convection condenses cloud as it rises — the
+    // sky loads clear and the storm builds up from convection over the first seconds (instead of
+    // appearing as a full sheet at load), and there is real cloud mass for intra-cloud lightning
+    // to light up once the deck forms.
     if (texCoord.y < 0.50)
-      water[TOTAL] = maxWater(realTemp) * 0.96;  // near-saturated moist boundary layer, no liquid
+      water[TOTAL] = maxWater(realTemp) * 1.0;   // saturated moist boundary layer, no liquid yet
     else
-      water[TOTAL] = maxWater(realTemp) * 0.50;  // drier aloft, the cloud grows upward into it
+      water[TOTAL] = maxWater(realTemp) * 0.55;  // drier aloft, the cloud grows upward into it
 
     // maxWater() is capped and NaN proof, so the initial state is safe from the first
     // condensation boiling the cell and starting a vapor explosion
     water[TOTAL] = cleanWater(water[TOTAL]);
-    water[CLOUD] = max(water[TOTAL] - maxWater(realTemp), 0.0); // 0 (sub-saturated) until lifted & condensed
+    water[CLOUD] = max(water[TOTAL] - maxWater(realTemp), 0.0); // 0 until lifted & condensed
   }
   wall[VERT_DISTANCE] = 100;                                    // preset height above ground to prevent water being deleted in boundaryshader ln 250*`
 }

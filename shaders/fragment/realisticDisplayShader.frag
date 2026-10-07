@@ -425,25 +425,25 @@ vec4 getAirColor(vec2 fragCoordIn)
   float lightningTime = calcLightningTime(lightningStartIterNum);
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
-  if (lightningData[INTENSITY] > 1.0) { // CG
-    // The bolt channel, only lightly dimmed by the cloud it strikes through — a real channel is
-    // HDR-bright and its glow is scattered light, so it should still read clearly inside the deck.
-    float cloudDim = 1.0 / (1.0 + cloudDensity * 3.0);
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * cloudDim;
+  // INTRA-CLOUD (IC) lightning: the discharge stays inside the cloud — a fractal flash within
+  // the deck and the cloud lighting up from within — with no ground stroke. The bolt is clipped
+  // to the cloud mass, the return-stroke flash illuminates the cloud it lives in, and the scene
+  // below is only faintly lit (an IC flash scatters a little light; it does not strike the ground).
+  if (lightningData[INTENSITY] > 1.0) {
+    float cloudMask = clamp(cloudDensity, 0.0, 1.0);
+    // the bolt channel, only where there is cloud (intra-cloud: no stroke below the deck)
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * (0.06 + 0.94 * cloudMask);
 
-    // Position-based return-stroke flash: brightest at the bolt, radiating out as a broad
-    // bluish-white glow with a tight hot core. A real strike LIGHTS UP the cloud it is in (the
-    // deck glows), so the flash is NOT suppressed by the local cloud density — it only falls off
-    // with distance from the strike and flickers with the return-stroke envelope. Because scene
-    // opacity follows emittedLight, the sky itself glows only near the strike, localised like
-    // a real flash rather than a flat full-screen wash.
+    // the return-stroke flash: a tight hot core and a broad glow that lights the cloud from
+    // within, falling off with distance from the discharge. Strong inside the deck, faint in
+    // the surrounding air (a little scattered light) — never a full-screen wash.
     if (lightningTime > 1.0) {
       vec2 fpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
       fpos.x *= aspectRatios[0];
       float fd = length(fpos);
-      float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core hugging the bolt
-      float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // broad sky glow, falls off with distance
-      emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow);
+      float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core within the cloud
+      float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // the deck glows from within
+      emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask);
     }
   }
 
@@ -453,7 +453,7 @@ vec4 getAirColor(vec2 fragCoordIn)
   dist.x *= aspectRatios[0];
   float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.05);
   lightningOnLight *= currentLightningIntensity;
-  onLight += vec3(lightningOnLight);
+  onLight += vec3(lightningOnLight) * 0.35; // IC: the ground/scene below is only faintly lit
 
   return vec4(color, opacity);
 }

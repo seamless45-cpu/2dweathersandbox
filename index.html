@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>2D Weather Sandbox</title>
+    <link rel="preload" as="image" href="resources/img/loading-bg.jpg" fetchpriority="high" />
     <script type="text/javascript" src="libraries/dat.gui.min.js"></script>
     <script type="text/javascript" src="libraries/pako.min.js"></script>
     <script type="text/javascript" src="libraries/chart.js"></script>
@@ -462,35 +463,38 @@
         .fill-arc { stroke: var(--success); stroke-width: 24; fill: none; stroke-linecap: round; transition: stroke 0.4s linear; }
         .value { font-size: 56px; font-weight: 700; fill: var(--text); text-anchor: middle; font-family: var(--font-mono); }
         /* ===== LOADING SCREEN ===== */
-        /* A simple rainbow bar over the storm background photo. The bar itself is the full
-           rainbow; a dark mask (the fill) shrinks from the right so the colours sweep in
-           left to right as loading progresses. */
+        /* A single, simple rainbow progress bar centred on the storm background photo.
+           The bar itself is the full rainbow; a dark mask (the fill) shrinks from the right
+           so the colours sweep in left to right as loading progresses. No box, LED, percent
+           or step text — just the bar. The overlay is opaque so it fully covers the UI behind. */
         .ls-overlay {
-            position: fixed; inset: 0; z-index: 80;
+            position: fixed; inset: 0; z-index: 90;
             display: flex; align-items: center; justify-content: center;
-            background: linear-gradient(rgba(7, 9, 15, 0.45), rgba(7, 9, 15, 0.45)), url('resources/img/loading-bg.jpg') center / cover no-repeat;
+            background:
+                radial-gradient(130% 100% at 50% 42%, rgba(4, 6, 12, 0.12) 0%, rgba(4, 6, 12, 0.66) 100%),
+                url('resources/img/loading-bg.jpg') center / cover no-repeat #05070d;
             opacity: 1;
-            transition: opacity 0.4s ease;
+            transition: opacity 0.5s ease;
         }
         .ls-overlay.ls-done { opacity: 0; pointer-events: none; }
         .ls-track {
             position: relative;
-            width: min(460px, 66vw);
-            height: 14px;
-            border-radius: 7px;
+            width: min(520px, 74vw);
+            height: 13px;
+            border-radius: 999px;
             overflow: hidden;
-            background: linear-gradient(90deg, #ff1e56, #ff7a00, #ffe600, #2ee06a, #18c7ff, #4d5bff, #b13cff);
-            box-shadow: 0 2px 16px rgba(0,0,0,0.55);
+            background: linear-gradient(90deg, #ff2d55, #ff8a00, #ffd60a, #2ee06a, #18c7ff, #5b6cff, #b13cff);
+            box-shadow: 0 8px 34px rgba(0,0,0,0.6), 0 0 24px rgba(80, 120, 255, 0.35), inset 0 0 0 1px rgba(255,255,255,0.16);
         }
         .ls-fill {
             position: absolute; top: 0; right: 0; height: 100%; width: 100%;
-            background: rgba(7, 9, 15, 0.74);
-            border-radius: 7px;
-            transition: width 0.25s ease;
+            background: rgba(5, 8, 14, 0.84);
+            border-radius: 999px;
+            transition: width 0.28s ease;
         }
 
         .ls-overlay.ls-error .ls-track { background: #e11d2e; box-shadow: 0 2px 16px rgba(225,29,46,0.5); }
-        .ls-overlay.ls-error .ls-fill { background: rgba(7, 9, 15, 0.5); }
+        .ls-overlay.ls-error .ls-fill { background: rgba(5, 8, 14, 0.55); }
     </style>
 </head>
 
@@ -503,6 +507,7 @@
         <div class="nav-icons">
             <span id="navClock">--:--:--</span>
             <button class="sfx-btn" id="sfxToggle" type="button">SFX On</button>
+            <button class="sfx-btn" id="fsToggle" type="button" title="Toggle fullscreen">⛶ Fullscreen</button>
         </div>
     </nav>
 
@@ -979,6 +984,30 @@
         const paint = () => r.style.setProperty('--fill', ((r.value - r.min) / (r.max - r.min) * 100) + '%');
         r.addEventListener('input', paint); paint();
     });
+
+    /* ═══════════ Fullscreen mode (on by default) ═══════════
+       The Fullscreen API needs a user gesture, so we enter on the first interaction
+       (click/keydown) by default. The button lets the user toggle it afterwards. */
+    (() => {
+      const btn = $id('fsToggle');
+      if (!btn) return;
+      const isFS = () => !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+      const target = () => document.getElementById('mainCanvas') || document.documentElement;
+      const enter = () => { const el = target(); const f = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen; if (f) f.call(el); };
+      const exit = () => { const f = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen; if (f) f.call(document); };
+      function update() {
+        const on = isFS();
+        btn.textContent = on ? '⛶ Exit Fullscreen' : '⛶ Fullscreen';
+        btn.classList.toggle('off', !on);
+      }
+      btn.addEventListener('click', (e) => { e.stopPropagation(); isFS() ? exit() : enter(); });
+      // auto-on by default: enter fullscreen on the first user gesture
+      const autoEnter = () => { if (!isFS()) { enter(); window.removeEventListener('pointerdown', autoEnter); window.removeEventListener('keydown', autoEnter); } };
+      window.addEventListener('pointerdown', autoEnter);
+      window.addEventListener('keydown', autoEnter);
+      ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(ev => document.addEventListener(ev, update));
+      update();
+    })();
     </script>
 </body>
     </html>

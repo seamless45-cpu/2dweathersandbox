@@ -449,6 +449,9 @@ const guiControls_default = {
   SmoothCam : true,
   camSpeed : 0.01,
   exposure : 1.0,
+  displayResScale : 0.72, // internal display resolution (0..1). The scene renders at this fraction
+                          // of the window and the single post pass upscales it, cutting fragment
+                          // cost while the smooth upscale keeps the visuals intact.
   timeOfDay : 9.9,
   latitude : 45.0,
   month : 6.65, // Northern hemisphere summer solstice
@@ -889,7 +892,13 @@ class FBO // wraps texture, frambuffer and info in one
   }
 }
 
-function createHdrFBO() { hdrFBO = new FBO(canvas.width, canvas.height, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR); }
+function createHdrFBO() {
+  // Render the scene at a reduced internal resolution and let the post pass upscale it.
+  const scale = (guiControls && guiControls.displayResScale) || 1.0;
+  const w = Math.max(2, Math.round(canvas.width * scale));
+  const h = Math.max(2, Math.round(canvas.height * scale));
+  hdrFBO = new FBO(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
+}
 
 function createAmbientLightFBOs()
 {
@@ -4063,6 +4072,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
+    display_folder.add(guiControls, 'displayResScale', 0.40, 1.0, 0.02)
+      .onChange(function() {
+        createHdrFBO(); // rebuild the HDR buffer at the new internal resolution
+      })
+      .name('Display Resolution');
+
     display_folder.add(guiControls, 'camSpeed', 0.001, 0.050, 0.001).name('Camera Pan Speed');
 
 
@@ -6649,8 +6664,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFBO.frameBuffer); // render to hdr framebuffer
-      // gl.viewport(0, 0, sim_res_x, sim_res_y);
-      gl.viewport(0, 0, canvas.width, canvas.height);
+      // Render the scene at the (reduced) internal resolution; the post pass upscales it.
+      gl.viewport(0, 0, hdrFBO.width, hdrFBO.height);
       gl.clearColor(0.0, 0.0, 0.0, 1.0); // background color
       gl.clear(gl.COLOR_BUFFER_BIT);
 
