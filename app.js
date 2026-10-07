@@ -5814,12 +5814,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
         }
 
-        if (lineWidth > 0.6 && Math.random() < 0.008 * (1.0 - y / height))
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.42, Math.floor(maxLength * 0.96)); // branch length
+        if (lineWidth > 0.6 && Math.random() < 0.03 * (1.0 - y / height))
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, Math.max(1.2, lineWidth * 0.75), Math.floor(maxLength * 0.9)); // thicker, longer branches
       }
     }
 
-    drawBolt(width / 2, 0, Math.PI / 12, 2.5, height);
+    drawBolt(width / 2, 0, Math.PI / 12, 3.0, height);
     generateLightningTexture(i, new ImageData(data, width, height));
   }
 

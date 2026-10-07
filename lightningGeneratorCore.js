@@ -35,7 +35,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
   let angle = (Math.random() - 0.5) * 0.4;        // Start nearly vertical
   let lineWidth = 5.0 + Math.random() * 3.0;      // Slightly varied thickness
   const targetAngle = 0.0;                         // 0 = straight down
-  const maxBranches = 60;                          // Fewer = more realistic
+  const maxBranches = 110;                         // enough leaders for a real web
   let numBranches = 0;
 
   while (currY < height) {
@@ -53,11 +53,11 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
     // Branching: more frequent in upper 60% of bolt, rare near ground
     const heightFactor = 1 - (currY / height) * 0.7;
-    if (numBranches < maxBranches && Math.random() < 0.045 * heightFactor) {
+    if (numBranches < maxBranches && Math.random() < 0.09 * heightFactor) {
       numBranches++;
       // Branches angle outward and downward; rarely go upward
       const branchAngle = angle + (Math.random() - 0.5) * 2.2;
-      const branchWidth = lineWidth * (0.25 + Math.random() * 0.35);
+      const branchWidth = lineWidth * (0.45 + Math.random() * 0.45); // thicker, clearly visible leaders
       drawBranch(nextX, nextY, branchAngle, branchWidth);
     }
 
@@ -90,15 +90,16 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
       addSegment(x, y, nextX, nextY, w, false);
 
-      // Branches fade exponentially (much faster than main bolt)
-      w *= 0.45;
-      if (Math.random() < 0.06) w *= 0.325;
+      // Branches fade gradually (a bit faster than the main bolt) so they stay visible as real
+      // tapering leaders over most of their length instead of collapsing to a dot in two steps.
+      w *= 0.78;
+      if (Math.random() < 0.05) w *= 0.6;
 
-      // Rare secondary branching
-      if (numBranches < maxBranches && Math.random() < 0.02) {
+      // Occasional secondary branching for a true forking web
+      if (numBranches < maxBranches && Math.random() < 0.05) {
         numBranches++;
-        const subAngle = angle + (Math.random() - 0.5) * 1.2;
-        drawBranch(nextX, nextY, subAngle, w * 0.45);
+        const subAngle = angle + (Math.random() - 0.5) * 1.6;
+        drawBranch(nextX, nextY, subAngle, w * 0.7);
       }
 
       x = nextX;
