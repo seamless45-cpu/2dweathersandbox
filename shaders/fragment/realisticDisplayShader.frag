@@ -279,23 +279,36 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
 
   float texVal = pixVal; // keep the raw bolt field so the branches/glow can use wider footprints
 
+  // ── colour the bolt by the LOCAL temperature ─────────────────────────────────
+  // The channel colour follows the same palette the temperature view uses, sampled at the
+  // fragment the bolt is drawn in, so a strike reads in the colour of the air it's in (cold
+  // decks cool, warm tropical decks warm) instead of a single hard-coded blue. The core is
+  // pushed toward white/hot on top of that base so the discharge still reads as hot plasma,
+  // and the halo is a cooler, more diffuse tint of the same base.
+  float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
+  int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
+  vec3 baseTempCol = tempColorPalette[palIndex];
+  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45);        // hot core, still clearly the temp hue
+  vec3 branchCol    = mix(baseTempCol, vec3(1.0), 0.22);        // leaders, closer to the raw temp colour
+  vec3 glowCol      = baseTempCol * vec3(0.9, 0.93, 1.0);       // cool diffuse halo of the same base
+
   // ── a real strike has three parts, all flicker-modulated ─────────────────────
   // 1. the hot core channel (only the boldest line, tight threshold)
-  // 2. the branching leaders (thinner fractal branches, a lower threshold so they show)
+  // 2. the branching leaders (thinner fractal branches, a LOWER threshold so they show)
   // 3. the corona/halo (a broad soft glow, quadratic falloff — an in-shader halo,
   //    deliberately not a post-process bloom)
-  float channelVal = max(texVal - brightnessThreshold, 0.0);
-  channelVal *= currentLightningIntensity;
-  float branchVal = max(texVal - max(brightnessThreshold - 0.40, 0.0), 0.0);
-  branchVal *= currentLightningIntensity * 0.45; // branches a touch dimmer than the core
-  float glow = max(texVal - max(brightnessThreshold - 0.95, 0.0), 0.0);
+  float coreField = max(texVal - brightnessThreshold, 0.0);
+  float channelVal = coreField * currentLightningIntensity;
+  // Branches: a lower threshold so the thinner fractal leaders show. Take the field above the
+  // lower branch threshold and subtract the core field already shown, so the leaders read as
+  // their own fainter, webby lines around (not stacked on) the bright core channel.
+  float branchField = max(texVal - max(brightnessThreshold - 0.55, 0.0), 0.0) - coreField;
+  float branchVal = branchField * currentLightningIntensity * 0.55;
+  // Corona: sample well below the line with a quadratic falloff so the whole bolt is wrapped in
+  // a broad soft glow (visible bloom), not just a thin wire.
+  float glow = max(texVal - max(brightnessThreshold - 1.0, 0.0), 0.0);
   glow *= glow;
-  glow *= currentLightningIntensity * 0.85;
-
-  // Real lightning is a bluish-white (nitrogen excitation), NOT violet/pink.
-  const vec3 lightningCol = vec3(0.82, 0.90, 1.00); // bluish-white core
-  const vec3 branchCol    = vec3(0.72, 0.82, 1.00); // bluish leaders
-  const vec3 glowCol      = vec3(0.55, 0.70, 1.00); // cool blue-white halo
+  glow *= currentLightningIntensity * 0.9;
 
   vec3 outputColor = channelVal * lightningCol + branchVal * branchCol + glow * glowCol;
   return max(outputColor, vec3(0));
@@ -445,21 +458,33 @@ vec4 getAirColor(vec2 fragCoordIn)
       float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // the deck glows from within
       emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask);
 
-      // ── intra-cloud arcs: thin, wavy sideways discharge channels ────────────────
-      // Real IC lightning is not just a vertical bolt — it has branching arcs that run
-      // horizontally through the deck between the cloud tops. A few thin, jagged channels
-      // radiate out from the strike point, fading with range, only where there is cloud.
+      // ── intra-cloud arcs: a branching, jagged web of discharge in the deck ───────
+      // Real IC lightning is not one clean line — it's several faint, jagged leaders that
+      // fork and wander sideways through the cloud mass. Radiate a handful of thin, noisy
+      // channels out from the strike at different angles; each meanders (stacked sines), fades
+      // quickly with range, flickers on its own phase, and is clipped so it only exists inside
+      // cloud. The colour tints with the local temperature, like the main channel.
       vec2 apos = vec2(texCoord.x - lightningPos.x, texCoord.y - lightningPos.y);
       apos.x *= aspectRatios[0];
       float adist = length(apos);
-      float aradial = smoothstep(0.30, 0.02, adist); // fade with range from the strike
-      float awave = sin(apos.x * 55.0 + iterNum * 0.9) * 0.012 + sin(apos.y * 40.0 - iterNum * 0.7) * 0.008;
-      for (int i = 0; i < 3; i++) {
+      float aradial = smoothstep(0.34, 0.03, adist);     // fade with range from the strike
+      float strikeTempC2 = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
+      int arcPalIndex = int(clamp(map_range(strikeTempC2, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
+      vec3 baseTempColAtStrike = tempColorPalette[arcPalIndex];
+      vec3 arcBaseCol = mix(baseTempColAtStrike, vec3(1.0), 0.35); // hot leaders tinted by temp
+      for (int i = 0; i < 5; i++) {
         float fi = float(i);
-        float baseY = (fi - 1.0) * 0.05;                 // three lanes: up, level, down
-        float lane = abs(apos.y - baseY + awave * (1.0 + fi * 0.5));
-        float arc = smoothstep(0.010, 0.0, lane) * (0.6 + 0.4 * sin(iterNum * 1.7 + fi * 2.1));
-        emittedLight += vec3(0.75, 0.85, 1.0) * currentLightningIntensity * arc * aradial * 1.6 * (0.10 + 0.90 * cloudMask);
+        float ang = fi * 1.2566 + 0.4 + sin(fi * 7.13) * 0.25;      // ~even fan, slightly irregular
+        float dirx = cos(ang), diry = sin(ang) * 0.55;               // squashed vertically (deck is wide)
+        float along = dot(apos, vec2(dirx, diry));                    // distance along the leader
+        float across = abs(dot(apos, vec2(-diry, dirx)));             // distance off the leader
+        // the leader meanders as it runs outward; the wiggle grows a little with range
+        float meander = sin(along * 60.0 + fi * 3.1 + iterNum * 0.6) * 0.006
+                      + sin(along * 140.0 - fi * 1.7 - iterNum * 0.4) * 0.004;
+        float chan = smoothstep(0.014, 0.0, across - abs(meander));
+        float reach = smoothstep(0.30, 0.02, along);                  // each leader dies out down-range
+        float flicker = 0.55 + 0.45 * sin(iterNum * 2.3 + fi * 2.1);
+        emittedLight += arcBaseCol * currentLightningIntensity * chan * reach * aradial * flicker * 1.5 * (0.12 + 0.88 * cloudMask);
       }
     }
   }

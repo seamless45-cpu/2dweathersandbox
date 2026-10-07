@@ -90,15 +90,14 @@ void main()
 
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
-    // No liquid cloud at t=0, but a SATURATED low boundary layer under drier air aloft. The air
-    // sits right at the dew point, so the very first convection condenses cloud as it rises — the
-    // sky loads clear and the storm builds up from convection over the first seconds (instead of
-    // appearing as a full sheet at load), and there is real cloud mass for intra-cloud lightning
-    // to light up once the deck forms.
-    if (texCoord.y < 0.50)
-      water[TOTAL] = maxWater(realTemp) * 1.0;   // saturated moist boundary layer, no liquid yet
-    else
-      water[TOTAL] = maxWater(realTemp) * 0.55;  // drier aloft, the cloud grows upward into it
+    // No liquid cloud at t=0, and the air starts UN-saturated (below the dew point) so the sky
+    // loads genuinely clear — nothing condenses until real convection lifts the parcel to its
+    // lifting condensation level. A saturated start (1.0) made cloud appear in the first couple
+    // of seconds on load, which read as unexpected cloud forming while the sim was still starting
+    // up. Keep the whole column comfortably below saturation; evaporation + surface heating will
+    // moisten the boundary layer and the storm still builds from convection, just on its own time.
+    float initSaturation = mix(0.45, 0.30, texCoord.y); // slightly moister near the surface, drier aloft
+    water[TOTAL] = maxWater(realTemp) * initSaturation;
 
     // maxWater() is capped and NaN proof, so the initial state is safe from the first
     // condensation boiling the cell and starting a vapor explosion

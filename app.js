@@ -4072,7 +4072,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
-    display_folder.add(guiControls, 'displayResScale', 0.40, 1.0, 0.02)
+    display_folder.add(guiControls, 'displayResScale', 0.40, 1.25, 0.02)
       .onChange(function() {
         createHdrFBO(); // rebuild the HDR buffer at the new internal resolution
       })
