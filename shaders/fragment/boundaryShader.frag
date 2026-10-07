@@ -54,7 +54,7 @@ float getInitialT(int y)
 
 #define minimalFireVegetation 20
 
-#define minimalFireIntensity 0.002
+#define minimalFireIntensity 0.0012
 
 #define wallVerticalInfluence 1 // 2 How many cells above the wall surface effects like heating and evaporation are applied
 
@@ -84,7 +84,7 @@ float calcEvaporation(float T, float W, float V, float M)                       
   return min(deficit * landEvaporation * vegFactor * moistureFactor, maxW * maxWaterCapPerIter);
 }
 
-float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.000025 - moist * 0.000020 - precip * 0.002, 0.); }
+float calcFireIntensity(int veg, float moist, float precip) { return max(float(veg) * 0.000045 - moist * 0.000015 - precip * 0.0015, 0.); }
 
 void main()
 {
@@ -345,7 +345,7 @@ void main()
 
           fireIntensity = max(fireIntensity, 0.);
           base[TEMPERATURE] += fireIntensity;   // heat
-          water[SMOKE] += fireIntensity * 2.0;  // smoke
+          water[SMOKE] += fireIntensity * 6.0;  // smoke (faster so a struck fire is visible quickly)
           water[TOTAL] += fireIntensity * 0.05; // extra water from burning trees, both from water in the wood and from burning of hydrogen and hydrocarbons
         }
         // nobreak!

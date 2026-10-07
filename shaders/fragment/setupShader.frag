@@ -90,15 +90,18 @@ void main()
 
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
-    if (texCoord.y < 0.60) // deep, strongly-saturated layer so a substantial cloud deck
-      water[TOTAL] = maxWater(realTemp + 5.0);  // exists from the start and has fuel to grow tall
+    // Seed the lower boundary layer with a moderate cloud but leave the upper column clearly
+    // drier, so the deck starts low and builds upward over time instead of appearing as a full,
+    // uniform sheet the instant the simulation starts.
+    if (texCoord.y < 0.55)
+      water[TOTAL] = maxWater(realTemp + 4.5);  // a dense, opaque deck that lights up rather than showing haze
     else
-      water[TOTAL] = maxWater(realTemp - 2.0);  // only slightly sub-saturated aloft, lets it grow upward
+      water[TOTAL] = maxWater(realTemp - 3.0);  // drier aloft — the storm's top keeps developing as it rises
 
-    // maxWater() is capped and NaN proof, so the initial state can be saturated without the first
+    // maxWater() is capped and NaN proof, so the initial state is safe from the first
     // condensation boiling the cell and starting a vapor explosion
     water[TOTAL] = cleanWater(water[TOTAL]);
-    water[CLOUD] = max(water[TOTAL] - maxWater(realTemp), 0.0); // calculate cloud water
+    water[CLOUD] = max(water[TOTAL] - maxWater(realTemp), 0.0); // 0 in the dry upper layer
   }
   wall[VERT_DISTANCE] = 100;                                    // preset height above ground to prevent water being deleted in boundaryshader ln 250*`
 }

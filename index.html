@@ -462,65 +462,35 @@
         .fill-arc { stroke: var(--success); stroke-width: 24; fill: none; stroke-linecap: round; transition: stroke 0.4s linear; }
         .value { font-size: 56px; font-weight: 700; fill: var(--text); text-anchor: middle; font-family: var(--font-mono); }
         /* ===== LOADING SCREEN ===== */
+        /* A simple rainbow bar over the storm background photo. The bar itself is the full
+           rainbow; a dark mask (the fill) shrinks from the right so the colours sweep in
+           left to right as loading progresses. */
         .ls-overlay {
             position: fixed; inset: 0; z-index: 80;
             display: flex; align-items: center; justify-content: center;
-            background: var(--bg);
+            background: linear-gradient(rgba(7, 9, 15, 0.45), rgba(7, 9, 15, 0.45)), url('resources/img/loading-bg.jpg') center / cover no-repeat;
             opacity: 1;
-            transition: opacity 0.3s ease;
+            transition: opacity 0.4s ease;
         }
         .ls-overlay.ls-done { opacity: 0; pointer-events: none; }
-        .ls-box {
-            width: min(480px, 88vw);
-            padding: 32px 36px;
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            border-radius: var(--radius);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            animation: fadeIn 0.3s ease-out;
-        }
-        .ls-head { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-        .ls-titles { min-width: 0; flex: 1; }
-        .ls-title { font-size: 1.1rem; font-weight: 600; color: var(--text); }
-        .ls-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
-        .ls-led {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: var(--success);
-            flex: 0 0 auto;
-            animation: blink 1.5s infinite;
-        }
-        .ls-status {
-            font-family: var(--font-mono);
-            font-size: 0.85rem;
-            color: var(--text);
-            min-height: 1.4em;
-            margin-bottom: 12px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
         .ls-track {
-            height: 6px;
-            background: var(--bg-alt);
-            border-radius: 3px;
+            position: relative;
+            width: min(460px, 66vw);
+            height: 14px;
+            border-radius: 7px;
             overflow: hidden;
+            background: linear-gradient(90deg, #ff1e56, #ff7a00, #ffe600, #2ee06a, #18c7ff, #4d5bff, #b13cff);
+            box-shadow: 0 2px 16px rgba(0,0,0,0.55);
         }
         .ls-fill {
-            height: 100%;
-            width: 0%;
-            background: var(--accent);
-            border-radius: 3px;
-            transition: width 0.3s ease;
+            position: absolute; top: 0; right: 0; height: 100%; width: 100%;
+            background: rgba(7, 9, 15, 0.74);
+            border-radius: 7px;
+            transition: width 0.25s ease;
         }
-        .ls-meta { display: flex; justify-content: space-between; margin-top: 12px; }
-        .ls-percent { font-family: var(--font-mono); font-size: 1.2rem; font-weight: 600; color: var(--accent); }
-        .ls-step { font-size: 0.75rem; color: var(--text-muted); align-self: flex-end; }
 
-        .ls-overlay.ls-error .ls-fill { background: var(--error); }
-        .ls-overlay.ls-error .ls-status { color: var(--error); }
-        .ls-overlay.ls-error .ls-percent { color: var(--error); }
-        .ls-overlay.ls-error .ls-led { background: var(--error); }
+        .ls-overlay.ls-error .ls-track { background: #e11d2e; box-shadow: 0 2px 16px rgba(225,29,46,0.5); }
+        .ls-overlay.ls-error .ls-fill { background: rgba(7, 9, 15, 0.5); }
     </style>
 </head>
 

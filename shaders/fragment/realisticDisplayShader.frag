@@ -277,15 +277,23 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
     currentLightningIntensity *= leaderBrightness;
   }
 
+  float texVal = pixVal; // keep the raw bolt field so the glow can use a wider footprint
+
   pixVal -= brightnessThreshold;
-
   pixVal = max(pixVal, 0.0);
-
   pixVal *= currentLightningIntensity;
 
   const vec3 lightningCol = vec3(0.70, 0.57, 1.0); // 0.584, 0.576, 1.0
 
   vec3 outputColor = max(pixVal * lightningCol, vec3(0));
+
+  // Diffuse corona: a real lightning channel is a bright line wrapped in a broad soft halo.
+  // Lower the threshold well below the line and apply a quadratic falloff so the whole bolt
+  // glows instead of reading as a thin wire.
+  float glow = max(texVal - max(brightnessThreshold - 0.55, 0.0), 0.0);
+  glow *= glow;
+  glow *= currentLightningIntensity * 0.10;
+  outputColor += max(glow * vec3(0.62, 0.70, 1.0), vec3(0));
 
   return outputColor;
 }
@@ -344,7 +352,15 @@ vec4 getAirColor(vec2 fragCoordIn)
   float cloudDensity = max(cloudwater * 13.6, 0.0);
   float totalDensity = cloudDensity + water[PRECIPITATION] * 0.8; // visualize precipitation
 
+  // Puffy cloud texture: two noise octaves at cloud scale break the flat sheet into soft,
+  // sunlit billows. They modulate both the opacity (ragged, irregular edges) and the brightness
+  // (lit tops vs shadowed pockets), so the deck reads as distinct clouds, not a uniform band.
+  vec2 puffUV = texCoord * resolution;
+  vec2 puffN = textureLod(noiseTex, puffUV * 0.030, 3.0).rg; // one lookup, two channels
+  float puff = clamp(0.62 * puffN.r + 0.38 * puffN.g, 0.0, 1.0);
+
   float cloudOpacity = clamp(1.0 - (1.0 / (1. + totalDensity)), 0.0, 1.0);
+  cloudOpacity = clamp(cloudOpacity * (0.40 + 0.88 * puff), 0.0, 1.0); // ragged, soft edges
 
   float cloudLitFactor = clamp(0.25 + 0.90 * lightIntensity, 0.0, 1.0);
   const vec3 cloudTopCol = vec3(0.88, 0.90, 0.94);
@@ -358,6 +374,7 @@ vec4 getAirColor(vec2 fragCoordIn)
   float cloudThickness = clamp(totalDensity * 0.04, 0.0, 1.0);
   vec3 cloudEdgeTint = vec3(0.55, 0.62, 0.74);
   cloudCol = mix(cloudEdgeTint, cloudCol, cloudThickness);
+  cloudCol *= 0.70 + 0.58 * puff; // sunlit billows brighter, shadow pockets deeper
 
   // Sunset/sunrise: clouds pick up the colour of the sunlight
   float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0.0, 1.0), 0.0, 1.0);
@@ -446,7 +463,9 @@ void main()
   base = bilerpWallVis(baseTex, wallTex, bndFragCoord);
   wall = texture(wallTex, bndFragCoord * texelSize);                           // texCoord
   water = bilerpWallVis(waterTex, wallTex, bndFragCoord);
-  lightIntensity = texture(lightTex, bndFragCoord * texelSize)[0] / standardSunBrightness;
+  // Bilinearly filter the ray-marched light (sampled per-cell it shaded open water and terrain in a
+  // grid of columns). Smooth it so surfaces read as continuous volumes rather than a grid.
+  lightIntensity = bilerp(lightTex, bndFragCoord)[0] / standardSunBrightness;
 
   ivec4 wallX0Ym = texture(wallTex, texCoordX0Ym);
 
@@ -471,7 +490,7 @@ void main()
       // read as a grid over the whole water body; real open water is a smooth, darkening volume.
       float shallow = exp(-max(depth, 0.0) * 0.55);
       const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA));
-      const vec3 deepCol = pow(vec3(0.02, 0.06, 0.15), vec3(GAMMA));
+      const vec3 deepCol = pow(vec3(0.04, 0.11, 0.22), vec3(GAMMA));
       color = mix(deepCol, shallowCol, shallow);
     } else {
       color = getWallColor(depth);
@@ -483,7 +502,7 @@ void main()
     // the default zoom, so this band went to pure black (measured 10/255) and read as a hole in
     // the world rather than as a cross-section of earth. The floor keeps it clearly unlit while
     // still showing the soil it is supposed to be.
-    lightIntensity *= max(pow(0.5, -fragCoord.y), 0.06);
+    lightIntensity *= max(pow(0.5, -fragCoord.y), 0.14); // floor kept higher so deep water stays visible, not a black hole
 
   } else if (texCoord.y > 1.0) {                                                                  // above simulation area
     // color = vec3(0); // no need to set
@@ -609,7 +628,7 @@ void main()
         float shallow = exp(-depthBelowSurface * 0.55);
 
         const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA)); // turquoise, lit from above
-        const vec3 deepCol = pow(vec3(0.02, 0.06, 0.15), vec3(GAMMA));    // very dark blue, light fully absorbed
+        const vec3 deepCol = pow(vec3(0.04, 0.11, 0.22), vec3(GAMMA));    // dark blue, kept visible (not black)
         const vec3 sandCol = pow(vec3(0.55, 0.48, 0.36), vec3(GAMMA));    // the lit bottom, seen through very shallow water
 
         color = mix(deepCol, shallowCol, shallow);

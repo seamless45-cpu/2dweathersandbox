@@ -428,7 +428,7 @@ const guiControls_default = {
   waterTemperature : 25.0, // °C
   dynamicWaterTemperature : true,
   landEvaporation : 0.0005,
-  waterEvaporation : 0.001,
+  waterEvaporation : 0.02,    // raised to the top of the slider range: the sea feeds the air strongly so the deck can build up
   evapHeat : 2.90,          //  Real: 2260 J/g
   meltingHeat : 0.43,       //  Real:  334 J/g
   condensationRate : 0.005,
@@ -1651,9 +1651,6 @@ class LoadingBar
 {
   #overlay;
   #fill;
-  #percentText;
-  #statusText;
-  #stepText;
   percent;
   description;
 
@@ -1662,27 +1659,14 @@ class LoadingBar
     this.percent = percentIn == null ? 0 : percentIn;
     this.description = 'Initializing';
 
-    // reworked loading screen: themed boot-sequence overlay (styled in index.html)
+    // Simple loading screen: a rainbow bar over the storm background photo
+    // (both styled in index.html). The bar is the whole rainbow; a dark mask shrinks
+    // from the right so the colours sweep in left to right as loading progresses.
     this.#overlay = document.createElement('div');
     this.#overlay.className = 'ls-overlay';
-    this.#overlay.innerHTML = `
-        <div class="ls-box">
-            <div class="ls-head">
-                <div class="ls-titles">
-                    <div class="ls-title">2D Weather Sandbox</div>
-                    <div class="ls-sub">Atmospheric Simulation</div>
-                </div>
-                <div class="ls-led"></div>
-            </div>
-            <div class="ls-status">Initializing</div>
-            <div class="ls-track"><div class="ls-fill"></div></div>
-            <div class="ls-meta"><span class="ls-percent">0%</span><span class="ls-step">Step 00</span></div>
-        </div>`;
+    this.#overlay.innerHTML = `<div class="ls-track"><div class="ls-fill"></div></div>`;
 
     this.#fill = this.#overlay.querySelector('.ls-fill');
-    this.#percentText = this.#overlay.querySelector('.ls-percent');
-    this.#statusText = this.#overlay.querySelector('.ls-status');
-    this.#stepText = this.#overlay.querySelector('.ls-step');
 
     this.#update();
 
@@ -1714,10 +1698,7 @@ class LoadingBar
   {
     return new Promise((resolve) => {
       const pct = Math.min(100, Math.max(0, Math.round(this.percent)));
-      this.#fill.style.width = pct + '%';
-      this.#percentText.textContent = pct + '%';
-      this.#statusText.textContent = this.description;
-      this.#stepText.textContent = 'Step ' + String(pct).padStart(2, '0');
+      this.#fill.style.width = (100 - pct) + '%'; // mask: shrink from the right to reveal the rainbow
       setTimeout(() => { resolve(); }, 5);
     });
   }
