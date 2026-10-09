@@ -199,7 +199,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 5.0; // 0. to 1. leader stage, 1. + Flash stage
+  return lightningTime / 30.0; // 0. to 1. leader stage, 1. + Flash stage (slowed so the strike spans several frames and reads as a gradual fade)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
