@@ -65,7 +65,8 @@ float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
   float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
   float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
   float T = max(mod(T0, repeatPeriod), minT);
-  return max((1. / (0.05 + pow(T * 2.0, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
+  // Fade 40% faster than the stock (in step with the display shader's bolt).
+  return max((1. / (0.05 + pow(T * 2.8, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
 vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
