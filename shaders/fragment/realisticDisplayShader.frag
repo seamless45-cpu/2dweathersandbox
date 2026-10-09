@@ -24,6 +24,7 @@ uniform sampler2D lightningTex;
 uniform sampler2D lightningDataTex;
 
 uniform sampler2D ambientLightTex;
+uniform sampler2D emittedLightTex; // DIAGNOSTIC: raw lighting-pass emitted-light buffer (pre-blur)
 
 uniform vec2 aspectRatios; // [0] Sim       [1] canvas
 
@@ -199,7 +200,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 30.0; // 0. to 1. leader stage, 1. + Flash stage (slowed so the strike spans several frames and reads as a gradual fade)
+  return lightningTime / 12.0; // 0. to 1. leader stage, 1. + Flash stage (a fade that is fast but still readable; 5.0 was instant, 30.0 lingered)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
@@ -977,6 +978,10 @@ void main()
   // tint with distance. (The pow() ramp is ~1 across the visible scene; it only tapers the
   // sliver below the simulation boundary.)
   emittedLight += vec3(ambientLightSample.a) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
+  // DIAGNOSTIC: raw, un-blurred strike luminance straight from the lighting pass (bypasses the
+  // blur chain). If a glow appears from this line, the lighting pass writes the glow and the
+  // blur chain is the culprit; if not, the lighting pass is not writing it at all.
+  emittedLight += vec3(texture(emittedLightTex, texCoord).a) * 500.0;
 
   finalLight += vec3(shadowLight) + onLight;
 

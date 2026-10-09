@@ -55,7 +55,7 @@ const vec3 tempColorPalette[] = vec3[](vec3(1., 0.7, 1.), vec3(1., 0.5, 1.), vec
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 30.0; // 0. to 1. leader stage, 1. + Flash stage (must match the display's pace so the glow fades with the bolt)
+  return lightningTime / 12.0; // 0. to 1. leader stage, 1. + Flash stage (must match the display's pace so the glow fades with the bolt)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
