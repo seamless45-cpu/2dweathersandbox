@@ -234,9 +234,9 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
 
   float pixVal = texture(lightningTex, lightningTexCoord).r;
 
-  const float branchShowFactor = 2.5;       // 1.5
-  const float leaderBrightness = 50000.;    // 200.0
-  const float mainBoltBrightness = 100000.; // 100000.
+  const float branchShowFactor = 2.5;
+  const float leaderBrightness = 0.12;   // dim violet leader (kept in the ACES range so it reads violet, not clipped to white)
+  const float mainBoltBrightness = 0.15; // bright violet stroke (in the ACES range; the old 100000.0 saturated to white)
 
   float brightnessThreshold = 1. - lightningTime * branchShowFactor;
   brightnessThreshold += lightningTexCoord.y * branchShowFactor; // grow from the top to the bottem
@@ -403,14 +403,25 @@ vec4 getAirColor(vec2 fragCoordIn)
     // the bolt channel, only where there is cloud (intra-cloud: no stroke below the deck)
     emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * (0.08 + 0.92 * cloudMask);
 
-    // a soft return-stroke flash that lights the cloud from within (violet),
-    // falling off with distance from the discharge — never a full-screen wash.
+    // the return-stroke flash: a tight violet core right at the discharge
     if (lightningTime > 1.0) {
       vec2 fpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
       fpos.x *= aspectRatios[0];
       float fd = length(fpos);
       float flash = 1.0 / (1.0 + fd * fd * 140.0);
-      emittedLight += vec3(0.78, 0.5, 1.0) * currentLightningIntensity * flash * (0.25 + 0.75 * cloudMask);
+      emittedLight += vec3(0.78, 0.5, 1.0) * currentLightningIntensity * flash * 0.01 * (0.25 + 0.75 * cloudMask);
+    }
+
+    // a broad, soft violet halo around the strike. Computed directly here (a radial
+    // falloff from the discharge), so it always shows — no dependency on the ambient/blur
+    // chain. Ramps in with the leader, peaks at the stroke, then fades with the strike.
+    if (lightningTime > 0.55) {
+      vec2 hpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
+      hpos.x *= aspectRatios[0];
+      float hd = length(hpos);
+      float halo = 1.0 / (1.0 + hd * hd * 20.0);
+      float haloRamp = smoothstep(0.55, 1.0, lightningTime);
+      emittedLight += vec3(0.75, 0.5, 1.0) * currentLightningIntensity * halo * 0.008 * haloRamp * (0.15 + 0.85 * cloudMask);
     }
   }
 
@@ -917,7 +928,7 @@ void main()
   // or ground pixels. Unclamped, so near the bolt it clips to white, fading to a local-colour
   // tint with distance. (The pow() ramp is ~1 across the visible scene; it only tapers the
   // sliver below the simulation boundary.)
-  emittedLight += vec3(ambientLightSample.a) * vec3(0.78, 0.55, 1.0) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5); // violet halo to match the bolt
+  emittedLight += min(ambientLightSample.a, 0.4) * vec3(0.78, 0.55, 1.0) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5); // subtle pipeline halo (capped so it can never wash out the scene)
 
   finalLight += vec3(shadowLight) + onLight;
 
