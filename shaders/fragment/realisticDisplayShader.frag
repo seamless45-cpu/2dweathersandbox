@@ -24,7 +24,6 @@ uniform sampler2D lightningTex;
 uniform sampler2D lightningDataTex;
 
 uniform sampler2D ambientLightTex;
-uniform sampler2D emittedLightTex; // DIAGNOSTIC: raw lighting-pass emitted-light buffer (pre-blur)
 
 uniform vec2 aspectRatios; // [0] Sim       [1] canvas
 
@@ -200,7 +199,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 12.0; // 0. to 1. leader stage, 1. + Flash stage (a fade that is fast but still readable; 5.0 was instant, 30.0 lingered)
+  return lightningTime / 8.0; // 0. to 1. leader stage, 1. + Flash stage (fast fade; 12.0 still lingered, 5.0 was instant)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
@@ -292,7 +291,7 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
   int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
   vec3 baseTempCol = tempColorPalette[palIndex];
-  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45); // hot core, still clearly the temp hue
+  vec3 lightningCol = mix(baseTempCol, vec3(0.75, 0.5, 1.0), 0.55); // violet discharge, tinted by the local temp
 
   vec3 outputColor = max(pixVal * lightningCol, vec3(0));
 
@@ -441,7 +440,7 @@ vec4 getAirColor(vec2 fragCoordIn)
       float fd = length(fpos);
       float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core within the cloud
       float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // the deck glows from within
-      emittedLight += vec3(0.72, 0.80, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask);
+      emittedLight += vec3(0.78, 0.5, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask); // violet flash
 
       // ── intra-cloud arcs: a branching, jagged web of discharge in the deck ───────
       // Real IC lightning is not one clean line — it's several faint, jagged leaders that
@@ -456,7 +455,7 @@ vec4 getAirColor(vec2 fragCoordIn)
       float strikeTempC2 = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
       int arcPalIndex = int(clamp(map_range(strikeTempC2, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
       vec3 baseTempColAtStrike = tempColorPalette[arcPalIndex];
-      vec3 arcBaseCol = mix(baseTempColAtStrike, vec3(1.0), 0.35); // hot leaders tinted by temp
+      vec3 arcBaseCol = mix(baseTempColAtStrike, vec3(0.75, 0.5, 1.0), 0.5); // violet leaders, tinted by temp
       for (int i = 0; i < 5; i++) {
         float fi = float(i);
         float ang = fi * 1.2566 + 0.4 + sin(fi * 7.13) * 0.25;      // ~even fan, slightly irregular
@@ -977,11 +976,7 @@ void main()
   // or ground pixels. Unclamped, so near the bolt it clips to white, fading to a local-colour
   // tint with distance. (The pow() ramp is ~1 across the visible scene; it only tapers the
   // sliver below the simulation boundary.)
-  emittedLight += vec3(ambientLightSample.a) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
-  // DIAGNOSTIC: raw, un-blurred strike luminance straight from the lighting pass (bypasses the
-  // blur chain). If a glow appears from this line, the lighting pass writes the glow and the
-  // blur chain is the culprit; if not, the lighting pass is not writing it at all.
-  emittedLight += vec3(texture(emittedLightTex, texCoord).a) * 500.0;
+  emittedLight += vec3(ambientLightSample.a) * vec3(0.78, 0.55, 1.0) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5); // violet halo to match the bolt
 
   finalLight += vec3(shadowLight) + onLight;
 
