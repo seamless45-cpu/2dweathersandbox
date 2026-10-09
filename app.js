@@ -6431,14 +6431,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, wallTexture_1);
             gl.activeTexture(gl.TEXTURE3);
-            // lightning strike (units 4/5) → its luminance becomes the glow carried in the
-            // emitted-light alpha, diffused by the ambient-light blur and added unclamped by the display
-            gl.activeTexture(gl.TEXTURE4);
-            gl.bindTexture(gl.TEXTURE_2D, lightningTextures[Math.floor(iterNum / 400) % numLightningTextures]);
-            gl.activeTexture(gl.TEXTURE5);
-            gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
-            gl.uniform1f(gl.getUniformLocation(lightingProgram, 'iterNum'), iterNum);
-            gl.uniform2f(gl.getUniformLocation(lightingProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
 
             if (even) {
               gl.bindTexture(gl.TEXTURE_2D, lightTexture_0);
@@ -6458,6 +6450,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               destDisplayVAO = precipDisplayVao_0;
             }
             even = !even;
+            // lightning strike (units 4/5) → its luminance becomes the glow carried in the
+            // emitted-light alpha, diffused by the ambient-light blur and added unclamped by the display
+            gl.activeTexture(gl.TEXTURE4);
+            gl.bindTexture(gl.TEXTURE_2D, lightningTextures[Math.floor(iterNum / 400) % numLightningTextures]);
+            gl.activeTexture(gl.TEXTURE5);
+            gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
+            gl.uniform1f(gl.getUniformLocation(lightingProgram, 'iterNum'), iterNum);
+            gl.uniform2f(gl.getUniformLocation(lightingProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
 
             gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1 ]); // calc light
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
