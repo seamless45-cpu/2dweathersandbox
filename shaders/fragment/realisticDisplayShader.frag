@@ -202,88 +202,63 @@ float calcLightningTime(float startIterNum)
   return lightningTime / 7.0; // 0. to 1. = leader stage, 1. + = flash stage (fresh: fast, but still fading)
 }
 
-float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity, float posFactor)
+float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
 {
-  float T0 = Tin - 1.0;
-  float intensitySq = pow(intensity, 2.0);
-  if (T0 < 0.0)
-    return smoothstep(0.62, 1.0, Tin) * intensitySq * 0.06; // faint, short leader
-  // Fast fade: a negative strike is a single sharp blip that dies quickly; a positive
-  // strike is brighter, carries one reflash, and lingers just a little longer.
-  float decay = exp(-T0 * mix(20.0, 8.0, posFactor));
-  float reflash = mix(0.0, 0.45, posFactor) * exp(-(T0 - 0.10) * 9.0) * step(0.10, T0);
-  return max(decay + reflash, 0.0) * intensitySq;
+  // The stock reference's clean flicker: the return stroke arrives as a small number of
+  // decaying flashes, then stops.
+  float T0 = Tin - 1.;
+  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
+  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
+  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
+  float T = max(mod(T0, repeatPeriod), minT);
+  return max((1. / (0.05 + pow(T * 2.0, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
-// the lightning-texture UV for the current fragment, relative to the strike
-vec2 lightningUV(vec2 pos)
+vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
 {
-  vec2 uv = texCoord;
-  uv.x -= mod(pos.x, 1.);
-  uv.y -= pos.y;
-  float scaleMult = 1. / pos.y; // 1.0 means the bolt is as tall as the sim height
-  uv.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
-  uv.y *= -scaleMult;
-  uv.x += 0.5;
-  return uv;
-}
+  vec2 lightningTexCoord = texCoord;
 
-// the display brightness of a raw bolt sample: the leader->stroke threshold plus the
-// leader/main-bolt scaling (kept in the ACES range so the hue reads, not clipped to white)
-float lightningValue(float pixVal, vec2 uv, float lightningTime, float currentLightningIntensity, float mainThreshold)
-{
+  lightningTexCoord.x -= mod(pos.x, 1.);
+
+  lightningTexCoord.y -= pos.y;
+
+  float scaleMult = 1. / pos.y; // 1.0 means lightning is as tall as the simheight
+
+  lightningTexCoord.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
+  lightningTexCoord.y *= -scaleMult;
+
+  lightningTexCoord.x += 0.5; // center lightning bolt
+
+  if (lightningTexCoord.x < 0.01 || lightningTexCoord.x > 1.01 || lightningTexCoord.y < 0.01 || lightningTexCoord.y > 1.01) // prevent edge effect when mipmapping
+    return vec3(0);
+
+  float pixVal = texture(lightningTex, lightningTexCoord).r;
+
   const float branchShowFactor = 2.5;
-  const float leaderBrightness = 0.12;
+  const float leaderBrightness = 0.12;   // kept in the ACES range so it reads violet, not clipped to white
   const float mainBoltBrightness = 0.15;
+
   float brightnessThreshold = 1. - lightningTime * branchShowFactor;
-  brightnessThreshold += uv.y * branchShowFactor; // grow from the top to the bottom
+  brightnessThreshold += lightningTexCoord.y * branchShowFactor; // grow from the top to the bottom
+
   brightnessThreshold = clamp(brightnessThreshold, 0., 1.);
+
   if (lightningTime > 1.0) { // main bolt
-    brightnessThreshold = mainThreshold;
+    brightnessThreshold = 0.95;
     currentLightningIntensity *= mainBoltBrightness;
   } else {
     currentLightningIntensity = leaderBrightness;
   }
-  return max(pixVal - brightnessThreshold, 0.0) * currentLightningIntensity;
-}
 
-// negative strike = cool violet (a hint of the local temp); positive = warmer pink-magenta
-vec3 lightningColor(float posFactor, float strikeTempC)
-{
-  int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
-  vec3 baseTempCol = tempColorPalette[palIndex];
-  vec3 negCol = mix(vec3(0.72, 0.5, 1.0), baseTempCol, 0.2);
-  vec3 posCol = vec3(0.95, 0.5, 0.92);
-  return mix(negCol, posCol, posFactor);
-}
+  pixVal -= brightnessThreshold;
 
-vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity, float posFactor)
-{
-  vec2 uv = lightningUV(pos);
-  if (uv.x < 0.01 || uv.x > 1.01 || uv.y < 0.01 || uv.y > 1.01)
-    return vec3(0);
-  float pixVal = texture(lightningTex, uv).r;
-  float val = lightningValue(pixVal, uv, lightningTime, currentLightningIntensity, 0.95);
-  float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
-  return max(val * lightningColor(posFactor, strikeTempC), vec3(0));
-}
+  pixVal = max(pixVal, 0.0);
 
-// a tight true-bloom: a small 4-tap blur of the channel so the glow hugs the bolt (a hair
-// wider than the sharp line) instead of a broad synthetic radial flash.
-vec3 displayLightningBloom(vec2 pos, float lightningTime, float currentLightningIntensity, float posFactor)
-{
-  vec2 uv = lightningUV(pos);
-  if (uv.x < 0.02 || uv.x > 1.0 || uv.y < 0.02 || uv.y > 1.0)
-    return vec3(0);
-  vec2 d = vec2(0.0012, 0.0006); // ~0.6 texel -> a tight glow a hair wider than the line
-  float pixVal = 0.25 * (
-    texture(lightningTex, uv + vec2( d.x,  d.y)).r +
-    texture(lightningTex, uv + vec2(-d.x,  d.y)).r +
-    texture(lightningTex, uv + vec2( d.x, -d.y)).r +
-    texture(lightningTex, uv + vec2(-d.x, -d.y)).r );
-  float val = lightningValue(pixVal, uv, lightningTime, currentLightningIntensity, 0.85); // lower threshold -> a touch wider
-  float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
-  return max(val * lightningColor(posFactor, strikeTempC) * 0.7, vec3(0));
+  pixVal *= currentLightningIntensity;
+
+  const vec3 lightningCol = vec3(0.70, 0.57, 1.0); // the stock reference's violet
+
+  return max(pixVal * lightningCol, vec3(0));
 }
 
 
@@ -408,45 +383,21 @@ vec4 getAirColor(vec2 fragCoordIn)
   float lightningStartIterNum = lightningData[START_ITERNUM];
 
   float lightningTime = calcLightningTime(lightningStartIterNum);
+  float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
-  // positive vs negative: the sim has no charge separation, so the local precipitation
-  // (droplet charge) decides it. Heavy rain = positive (rarer, brighter, lingers a touch);
-  // light rain = negative (the common, compact, fast violet strike).
-  float strikePrecip = texture(waterTex, lightningPos).z;
-  float posFactor = smoothstep(0.15, 0.5, strikePrecip);
-
-  float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY], posFactor);
-
-  // INTRA-CLOUD (IC) lightning: the discharge stays inside the cloud — a fractal flash within
-  // the deck and the cloud lighting up from within — with no ground stroke. The bolt is clipped
-  // to the cloud mass, the return-stroke flash illuminates the cloud it lives in, and the scene
-  // below is only faintly lit (an IC flash scatters a little light; it does not strike the ground).
-  if (lightningData[INTENSITY] > 1.0) {
-    float cloudMask = clamp(cloudDensity, 0.0, 1.0);
-    float strikeGlow = 0.08 + 0.92 * cloudMask; // brightest inside the deck
-
-    // the sharp bolt channel plus its tight true-bloom glow (a blur that hugs the line)
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity, posFactor) * strikeGlow;
-    emittedLight += displayLightningBloom(lightningPos, lightningTime, currentLightningIntensity, posFactor) * strikeGlow;
-
-    // the return-stroke flash: a tight core right at the discharge (positive is brighter + warmer)
-    if (lightningTime > 1.0) {
-      vec2 fpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
-      fpos.x *= aspectRatios[0];
-      float fd = length(fpos);
-      float flash = 1.0 / (1.0 + fd * fd * 140.0);
-      vec3 flashCol = mix(vec3(0.78, 0.5, 1.0), vec3(0.98, 0.6, 0.95), posFactor);
-      emittedLight += flashCol * currentLightningIntensity * flash * (0.01 + 0.012 * posFactor) * (0.25 + 0.75 * cloudMask);
-    }
+  if (lightningData[INTENSITY] > 1.0) { // CG
+    // the bolt channel, attenuated by the local cloud (the stock reference's cloud attenuation)
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 100.0);
   }
 
-#define lightningOnLightBrightness 0.010
+// the stock reference's glow: a position-based flash that lights the scene around the bolt
+#define lightningOnLightBrightness 0.004
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
-  float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.05);
+  float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.03);
   lightningOnLight *= currentLightningIntensity;
-  onLight += vec3(lightningOnLight) * 0.4; // IC: the scene below is only faintly lit
+  onLight += vec3(lightningOnLight);
 
   return vec4(color, opacity);
 }
@@ -935,15 +886,8 @@ void main()
     onLight += ambientLight * (0.20 + 0.60 * (1. - clamp(-texCoord.y * 8., 0., 1.)));
   }
 
-  // ── the lightning's glow ────────────────────────────────────────────────────
-  // The ambient light's alpha channel carries the strike's HDR luminance, diffused by the
-  // ambient-light blur chain. It is emitted light (like the bolt itself), so it is added to
-  // emittedLight — straight into the fragment colour, NOT through finalLight, which is
-  // multiplied by the surface albedo (color * finalLight) and would swallow the halo on dark
-  // or ground pixels. Unclamped, so near the bolt it clips to white, fading to a local-colour
-  // tint with distance. (The pow() ramp is ~1 across the visible scene; it only tapers the
-  // sliver below the simulation boundary.)
-  emittedLight += min(ambientLightSample.a, 0.4) * vec3(0.78, 0.55, 1.0) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5); // subtle pipeline halo (capped so it can never wash out the scene)
+  // (the lightning's glow is the stock reference's position-based flash, added to onLight in
+  // the lightning block above — no separate bloom/halo pass here)
 
   finalLight += vec3(shadowLight) + onLight;
 
