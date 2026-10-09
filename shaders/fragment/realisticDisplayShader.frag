@@ -274,44 +274,28 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
     brightnessThreshold = 0.95;
     currentLightningIntensity *= mainBoltBrightness;
   } else {
-    currentLightningIntensity *= leaderBrightness;
+    currentLightningIntensity = leaderBrightness;
   }
 
-  float texVal = pixVal; // keep the raw bolt field so the branches/glow can use wider footprints
+  pixVal -= brightnessThreshold;
+
+  pixVal = max(pixVal, 0.0);
+
+  pixVal *= currentLightningIntensity;
 
   // ── colour the bolt by the LOCAL temperature ─────────────────────────────────
   // The channel colour follows the same palette the temperature view uses, sampled at the
   // fragment the bolt is drawn in, so a strike reads in the colour of the air it's in (cold
-  // decks cool, warm tropical decks warm) instead of a single hard-coded blue. The core is
-  // pushed toward white/hot on top of that base so the discharge still reads as hot plasma,
-  // and the halo is a cooler, more diffuse tint of the same base.
+  // decks cool, warm tropical decks warm) instead of a single hard-coded blue. The value is
+  // pushed toward white/hot on top of that base so the discharge still reads as hot plasma.
   float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
   int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
   vec3 baseTempCol = tempColorPalette[palIndex];
-  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45);        // hot core, still clearly the temp hue
-  vec3 branchCol    = mix(baseTempCol, vec3(1.0), 0.22);        // leaders, closer to the raw temp colour
-  vec3 glowCol      = baseTempCol * vec3(0.9, 0.93, 1.0);       // cool diffuse halo of the same base
+  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45); // hot core, still clearly the temp hue
 
-  // ── a real strike has three parts, all flicker-modulated ─────────────────────
-  // 1. the hot core channel (only the boldest line, tight threshold)
-  // 2. the branching leaders (thinner fractal branches, a LOWER threshold so they show)
-  // 3. the corona/halo (a broad soft glow, quadratic falloff — an in-shader halo,
-  //    deliberately not a post-process bloom)
-  float coreField = max(texVal - brightnessThreshold, 0.0);
-  float channelVal = coreField * currentLightningIntensity;
-  // Branches: a lower threshold so the thinner fractal leaders show. Take the field above the
-  // lower branch threshold and subtract the core field already shown, so the leaders read as
-  // their own fainter, webby lines around (not stacked on) the bright core channel.
-  float branchField = max(texVal - max(brightnessThreshold - 0.55, 0.0), 0.0) - coreField;
-  float branchVal = branchField * currentLightningIntensity * 0.55;
-  // Corona: sample well below the line with a quadratic falloff so the whole bolt is wrapped in
-  // a broad soft glow (visible bloom), not just a thin wire.
-  float glow = max(texVal - max(brightnessThreshold - 1.0, 0.0), 0.0);
-  glow *= glow;
-  glow *= currentLightningIntensity * 0.9;
+  vec3 outputColor = max(pixVal * lightningCol, vec3(0));
 
-  vec3 outputColor = channelVal * lightningCol + branchVal * branchCol + glow * glowCol;
-  return max(outputColor, vec3(0));
+  return outputColor;
 }
 
 
