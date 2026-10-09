@@ -58,15 +58,16 @@ float calcLightningTime(float startIterNum)
   return lightningTime / 7.0; // 0. to 1. = leader stage, 1. + = flash stage (must match the display's pace so the glow fades with the bolt)
 }
 
-float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
+float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity, float posFactor)
 {
-  // Fresh, clean strike timing (must match the display so the glow fades with the bolt).
-  float T0 = Tin - 1.;
-  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
-  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
-  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
-  float T = max(mod(T0, repeatPeriod), minT);
-  return max((1. / (0.05 + pow(T * 2.0, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
+  // Fast-fade strike timing (must match the display so the ambient glow fades with the bolt).
+  float T0 = Tin - 1.0;
+  float intensitySq = pow(intensity, 2.0);
+  if (T0 < 0.0)
+    return smoothstep(0.62, 1.0, Tin) * intensitySq * 0.06;
+  float decay = exp(-T0 * mix(20.0, 8.0, posFactor));
+  float reflash = mix(0.0, 0.45, posFactor) * exp(-(T0 - 0.10) * 9.0) * step(0.10, T0);
+  return max(decay + reflash, 0.0) * intensitySq;
 }
 
 vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
@@ -326,7 +327,8 @@ void main()
       if (lightningData[INTENSITY] > 1.0) {
         vec2 lightningPos = lightningData.xy;
         float lightningTime = calcLightningTime(lightningData[START_ITERNUM]);
-        float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
+        float posFactor = smoothstep(0.15, 0.5, texture(waterTex, lightningPos).z); // match the display's type
+        float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY], posFactor);
         float cloudMask = clamp(max(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0), 0.0, 1.0);
         vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.06 + 0.94 * cloudMask);
         reflectedLight.a = max(max(bolt.r, bolt.g), bolt.b);
