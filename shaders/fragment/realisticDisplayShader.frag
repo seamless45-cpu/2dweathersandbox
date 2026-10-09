@@ -970,11 +970,13 @@ void main()
 
   // ── the lightning's glow ────────────────────────────────────────────────────
   // The ambient light's alpha channel carries the strike's HDR luminance, diffused by the
-  // ambient-light blur chain (the same tone-mapped ambient path as the bolt and fire — no
-  // separate post-process bloom). It is added straight to finalLight, unclamped, so the halo
-  // is not swallowed by the skylight cap above: near the bolt color*finalLight clips to white,
-  // fading to a local-colour tint with distance.
-  finalLight += vec3(ambientLightSample.a) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
+  // ambient-light blur chain. It is emitted light (like the bolt itself), so it is added to
+  // emittedLight — straight into the fragment colour, NOT through finalLight, which is
+  // multiplied by the surface albedo (color * finalLight) and would swallow the halo on dark
+  // or ground pixels. Unclamped, so near the bolt it clips to white, fading to a local-colour
+  // tint with distance. (The pow() ramp is ~1 across the visible scene; it only tapers the
+  // sliver below the simulation boundary.)
+  emittedLight += vec3(ambientLightSample.a) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
 
   finalLight += vec3(shadowLight) + onLight;
 

@@ -6623,7 +6623,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, ambientLightFBOs[0].frameBuffer);
         gl.viewport(0, 0, ambientLightFBOs[0].width, ambientLightFBOs[0].height);
-        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        // Alpha carries the lightning glow — clear it to 0 so only the strike's
+        // emitted light (diffused from emittedLightFBO) contributes. The old 1.0
+        // added a constant +1 glow to the whole scene.
+        gl.clearColor(0.0, 0.0, 0.0, 0.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         let prevFBO = emittedLightFBO; // the previous FBO
