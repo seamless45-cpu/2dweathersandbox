@@ -954,7 +954,8 @@ void main()
   // as wet black paint. The ground, unlike the sky, is a reflecting surface, so it gets the
   // full ambient term; the sky is left to the sky shader, which handles this itself. The term
   // is weighted and capped so a shadow stays darker than the sunlit side of the same surface.
-  vec3 ambientLight = texture(ambientLightTex, texCoord).rgb;
+  vec4 ambientLightSample = texture(ambientLightTex, texCoord);
+  vec3 ambientLight = ambientLightSample.rgb;
 
   if (texCoord.y >= 0.) {
     const float ambientGroundFactor = 2.2; // reflected light reaches every surface regardless of cloud
@@ -967,6 +968,13 @@ void main()
     onLight += ambientLight * (0.20 + 0.60 * (1. - clamp(-texCoord.y * 8., 0., 1.)));
   }
 
+  // ── the lightning's glow ────────────────────────────────────────────────────
+  // The ambient light's alpha channel carries the strike's HDR luminance, diffused by the
+  // ambient-light blur chain (the same tone-mapped ambient path as the bolt and fire — no
+  // separate post-process bloom). It is added straight to finalLight, unclamped, so the halo
+  // is not swallowed by the skylight cap above: near the bolt color*finalLight clips to white,
+  // fading to a local-colour tint with distance.
+  finalLight += vec3(ambientLightSample.a) * pow(1. - clamp(-texCoord.y * 15., 0., 1.), 2.5);
 
   finalLight += vec3(shadowLight) + onLight;
 

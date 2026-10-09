@@ -36,6 +36,114 @@ uniform float dryLapse;
 
 #include "common.glsl"
 
+// ───────────────────────── lightning emission ─────────────────────────
+// The strike is written into the ALPHA of the emitted-light buffer (reflectedLight.a).
+// The ambient-light blur chain then diffuses it, and the display shader adds that
+// channel back unclamped as the strike's glow/halo — the same tone-mapped ambient path
+// fire and city lights use, so there is no separate post-process bloom.
+uniform sampler2D lightningTex;
+uniform sampler2D lightningDataTex;
+uniform float iterNum;
+uniform vec2 aspectRatios; // [0] sim       [1] canvas
+
+const vec2 lightningTexRes = vec2(1024, 2048);
+const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
+
+const vec3 tempColorPalette[] = vec3[](vec3(1., 0.7, 1.), vec3(1., 0.5, 1.), vec3(1., 0.3, 1.), vec3(0.8, 0., 0.8), vec3(0.65, 0., 0.6), vec3(0.5, 0., 0.5), vec3(0.35, 0., 0.6), vec3(0., 0., 0.7), vec3(0., 0., 1.), vec3(0., 0.30, 1.), vec3(0., 0.44, 1.), vec3(0., 0.62, 1.0), vec3(0., 0.80, 1.0), vec3(0., 1., 1.), vec3(0., 0.50, 0.), vec3(0., 0.61, 0.0), vec3(0., 0.72, 0.), vec3(0., 0.85, 0.),
+                                       vec3(0., 1., 0.), vec3(0.5, 1., 0.), vec3(0.80, 1., 0.), vec3(1., 1., 0.), vec3(1., 0.8, 0.), vec3(1., 0.6, 0.), vec3(1., 0.4, 0.), vec3(1., 0., 0.), vec3(0.85, 0., 0.), vec3(0.72, 0., 0.), vec3(0.61, 0., 0.), vec3(0.52, 0., 0.));
+
+float calcLightningTime(float startIterNum)
+{
+  float lightningTime = iterNum - startIterNum;
+  return lightningTime / 5.0; // 0. to 1. leader stage, 1. + Flash stage
+}
+
+float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
+{
+  float strikeT = Tin - 1.0;
+  float intensitySq = pow(max(intensity, 0.0), 2.0);
+
+  if (strikeT < 0.0) {
+    float leaderRamp = smoothstep(0.65, 1.0, Tin);
+    return leaderRamp * intensitySq * 0.015;
+  }
+
+  const float burstDuration = 0.62;
+  if (strikeT > burstDuration) {
+    return 0.0;
+  }
+
+  float pulseCount = floor(map_range(random2d(lightningPos * 5.137 + vec2(0.71)), 0.0, 1.0, 4.0, 8.0));
+  float burst = 0.0;
+
+  for (int i = 0; i < 8; i++) {
+    float idx = float(i);
+    float activePulse = 1.0 - step(pulseCount, idx);
+    float pulseHash = random2d(lightningPos * (idx + 2.731) + vec2(idx * 19.17, 3.11));
+    float pulseStart = 0.015 + idx * 0.055 + pulseHash * 0.045;
+    float pulseAge = strikeT - pulseStart;
+
+    float attack = smoothstep(0.0, 0.012, pulseAge);
+    float falloff = exp(-max(pulseAge, 0.0) * map_range(pulseHash, 0.0, 1.0, 18.0, 34.0));
+    float pulseShape = attack * falloff * step(0.0, pulseAge);
+    float pulseAmp = map_range(random2d(lightningPos * (idx + 7.913) - vec2(1.7, idx)), 0.0, 1.0, 0.45, 1.25);
+    burst += pulseShape * pulseAmp * activePulse;
+  }
+
+  float quickClamp = pow(max(1.0 - strikeT / burstDuration, 0.0), 2.5);
+  return burst * quickClamp * intensitySq;
+}
+
+vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
+{
+  vec2 lightningTexCoord = texCoord;
+
+  lightningTexCoord.x -= mod(pos.x, 1.);
+
+  lightningTexCoord.y -= pos.y;
+
+  float scaleMult = 1. / pos.y; // 1.0 means lightning is as tall as the simheight
+
+  lightningTexCoord.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
+  lightningTexCoord.y *= -scaleMult;
+
+  lightningTexCoord.x += 0.5;
+
+  if (lightningTexCoord.x < 0.01 || lightningTexCoord.x > 1.01 || lightningTexCoord.y < 0.01 || lightningTexCoord.y > 1.01)
+    return vec3(0);
+
+  float pixVal = texture(lightningTex, lightningTexCoord).r;
+
+  const float branchShowFactor = 2.5;
+  const float leaderBrightness = 50000.;
+  const float mainBoltBrightness = 100000.;
+
+  float brightnessThreshold = 1. - lightningTime * branchShowFactor;
+  brightnessThreshold += lightningTexCoord.y * branchShowFactor;
+
+  brightnessThreshold = clamp(brightnessThreshold, 0., 1.);
+
+  if (lightningTime > 1.0) { // main bolt
+    brightnessThreshold = 0.95;
+    currentLightningIntensity *= mainBoltBrightness;
+  } else {
+    currentLightningIntensity = leaderBrightness;
+  }
+
+  pixVal -= brightnessThreshold;
+  pixVal = max(pixVal, 0.0);
+  pixVal *= currentLightningIntensity;
+
+  // colour the bolt by the LOCAL temperature (same palette as the display's bolt)
+  float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
+  int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
+  vec3 baseTempCol = tempColorPalette[palIndex];
+  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45); // hot core, still clearly the temp hue
+
+  return max(pixVal * lightningCol, vec3(0));
+}
+
+
 // ========================= reworked longwave IR =========================
 // The IR fluxes no longer crawl forward one cell per iteration. Each lighting
 // pass now advances both fluxes IR_STEP cells using a leapfrog gather:
@@ -236,6 +344,20 @@ void main()
 
         light = vec4(0.0, 0, 0, 0); // all light absorbed by ground
         reflectedLight.rgb += lightReflected / standardSunBrightness;
+      }
+    }
+
+    // ── lightning strike → glow (alpha of the emitted-light buffer) ──────────────
+    reflectedLight.a = 0.0;
+    {
+      vec4 lightningData = texture(lightningDataTex, vec2(0.5));
+      if (lightningData[INTENSITY] > 1.0) {
+        vec2 lightningPos = lightningData.xy;
+        float lightningTime = calcLightningTime(lightningData[START_ITERNUM]);
+        float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
+        float cloudMask = clamp(max(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0), 0.0, 1.0);
+        vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.06 + 0.94 * cloudMask);
+        reflectedLight.a = max(max(bolt.r, bolt.g), bolt.b);
       }
     }
   }

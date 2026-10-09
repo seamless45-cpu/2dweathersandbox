@@ -6044,6 +6044,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'waterTex'), 1);
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'wallTex'), 2);
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightTex'), 3);
+  gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightningTex'), 4);
+  gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightningDataTex'), 5);
   gl.uniform1f(gl.getUniformLocation(lightingProgram, 'dryLapse'), dryLapse);
 
   // Display programs:
@@ -6429,6 +6431,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, wallTexture_1);
             gl.activeTexture(gl.TEXTURE3);
+            // lightning strike (units 4/5) → its luminance becomes the glow carried in the
+            // emitted-light alpha, diffused by the ambient-light blur and added unclamped by the display
+            gl.activeTexture(gl.TEXTURE4);
+            gl.bindTexture(gl.TEXTURE_2D, lightningTextures[Math.floor(iterNum / 400) % numLightningTextures]);
+            gl.activeTexture(gl.TEXTURE5);
+            gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
+            gl.uniform1f(gl.getUniformLocation(lightingProgram, 'iterNum'), iterNum);
+            gl.uniform2f(gl.getUniformLocation(lightingProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
 
             if (even) {
               gl.bindTexture(gl.TEXTURE_2D, lightTexture_0);
