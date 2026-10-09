@@ -199,7 +199,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 7.0; // 0. to 1. = leader stage, 1. + = flash stage (fresh: fast, but still fading)
+  return lightningTime / 6.0; // 0. to 1. = leader stage, 1. + = flash stage (stock is /5.0 but that read as instant; /6.0 strikes down quicker)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
@@ -386,8 +386,11 @@ vec4 getAirColor(vec2 fragCoordIn)
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
   if (lightningData[INTENSITY] > 1.0) { // CG
-    // the bolt channel, attenuated by the local cloud (the stock reference's cloud attenuation)
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 100.0);
+    // the bolt channel. The stock reference divides its whole emitted light by (1+cloud*100) —
+    // that works there because its brightness is 50000/100000 (clips to white). Our bolt is a
+    // violet in the ACES range, so the *100 would drown it inside the thunderhead (only the
+    // glow would read). A mild *5 keeps it visible while still dimming it where the cloud is thickest.
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 5.0);
   }
 
 // the stock reference's glow: a position-based flash that lights the scene around the bolt
