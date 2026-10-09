@@ -235,8 +235,8 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   float pixVal = texture(lightningTex, lightningTexCoord).r;
 
   const float branchShowFactor = 2.5;
-  const float leaderBrightness = 0.12;   // kept in the ACES range so it reads violet, not clipped to white
-  const float mainBoltBrightness = 0.15;
+  const float leaderBrightness = 0.30;   // the fractal leader (thin branches): bright enough to read, still a faint violet
+  const float mainBoltBrightness = 0.6;  // the main channel: a bright violet flash (stock uses 50000/100000, which clips to pure white)
 
   float brightnessThreshold = 1. - lightningTime * branchShowFactor;
   brightnessThreshold += lightningTexCoord.y * branchShowFactor; // grow from the top to the bottom
@@ -388,13 +388,13 @@ vec4 getAirColor(vec2 fragCoordIn)
   if (lightningData[INTENSITY] > 1.0) { // CG
     // the bolt channel. The stock reference divides its whole emitted light by (1+cloud*100) —
     // that works there because its brightness is 50000/100000 (clips to white). Our bolt is a
-    // violet in the ACES range, so the *100 would drown it inside the thunderhead (only the
-    // glow would read). A mild *5 keeps it visible while still dimming it where the cloud is thickest.
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 5.0);
+    // bright violet in the ACES range, so the *100 would still drown it inside the thunderhead.
+    // A mild *2 dims it where the cloud is thickest without killing the flash.
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 2.0);
   }
 
 // the stock reference's glow: a position-based flash that lights the scene around the bolt
-#define lightningOnLightBrightness 0.004
+#define lightningOnLightBrightness 0.010
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
