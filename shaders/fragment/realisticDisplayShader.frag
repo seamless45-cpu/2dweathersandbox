@@ -199,7 +199,7 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 6.0; // 0. to 1. = leader stage, 1. + = flash stage (stock is /5.0 but that read as instant; /6.0 strikes down quicker)
+  return lightningTime / 5.0; // 30.0    0. to 1. leader stage, 1. + Flash stage (exactly the stock reference)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
@@ -234,9 +234,9 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
 
   float pixVal = texture(lightningTex, lightningTexCoord).r;
 
-  const float branchShowFactor = 2.5;
-  const float leaderBrightness = 0.30;   // the fractal leader (thin branches): bright enough to read, still a faint violet
-  const float mainBoltBrightness = 0.6;  // the main channel: a bright violet flash (stock uses 50000/100000, which clips to pure white)
+  const float branchShowFactor = 2.5;       // 1.5
+  const float leaderBrightness = 50000.;    // 200.0
+  const float mainBoltBrightness = 100000.; // 100000.
 
   float brightnessThreshold = 1. - lightningTime * branchShowFactor;
   brightnessThreshold += lightningTexCoord.y * branchShowFactor; // grow from the top to the bottom
@@ -386,15 +386,14 @@ vec4 getAirColor(vec2 fragCoordIn)
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
   if (lightningData[INTENSITY] > 1.0) { // CG
-    // the bolt channel. The stock reference divides its whole emitted light by (1+cloud*100) —
-    // that works there because its brightness is 50000/100000 (clips to white). Our bolt is a
-    // bright violet in the ACES range, so the *100 would still drown it inside the thunderhead.
-    // A mild *2 dims it where the cloud is thickest without killing the flash.
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 2.0);
+    // the bolt channel, exactly as the stock RealisticDisplayShader: the stock divides its whole
+    // emittedLight by (1+cloud*100); here emittedLight also holds fire/city/sun, so we divide the
+    // bolt term alone (identical effect on the lightning itself).
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 100.0);
   }
 
 // the stock reference's glow: a position-based flash that lights the scene around the bolt
-#define lightningOnLightBrightness 0.010
+#define lightningOnLightBrightness 0.004 // 0.002
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
