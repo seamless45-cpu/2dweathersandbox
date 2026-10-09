@@ -199,46 +199,19 @@ const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 8.0; // 0. to 1. leader stage, 1. + Flash stage (fast fade; 12.0 still lingered, 5.0 was instant)
+  return lightningTime / 7.0; // 0. to 1. = leader stage, 1. + = flash stage (fresh: fast, but still fading)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
 {
-  // Tin is normalized by calcLightningTime(): 0..1 is the leader phase,
-  // then the return stroke arrives. Keep the leader very dim and make the
-  // visible strike a compact cluster of hard, deterministic flicker pulses.
-  float strikeT = Tin - 1.0;
-  float intensitySq = pow(max(intensity, 0.0), 2.0);
-
-  if (strikeT < 0.0) {
-    float leaderRamp = smoothstep(0.65, 1.0, Tin);
-    return leaderRamp * intensitySq * 0.015;
-  }
-
-  const float burstDuration = 0.62;
-  if (strikeT > burstDuration) {
-    return 0.0;
-  }
-
-  float pulseCount = floor(map_range(random2d(lightningPos * 5.137 + vec2(0.71)), 0.0, 1.0, 4.0, 8.0));
-  float burst = 0.0;
-
-  for (int i = 0; i < 8; i++) {
-    float idx = float(i);
-    float activePulse = 1.0 - step(pulseCount, idx);
-    float pulseHash = random2d(lightningPos * (idx + 2.731) + vec2(idx * 19.17, 3.11));
-    float pulseStart = 0.015 + idx * 0.055 + pulseHash * 0.045;
-    float pulseAge = strikeT - pulseStart;
-
-    float attack = smoothstep(0.0, 0.012, pulseAge);
-    float falloff = exp(-max(pulseAge, 0.0) * map_range(pulseHash, 0.0, 1.0, 18.0, 34.0));
-    float pulseShape = attack * falloff * step(0.0, pulseAge);
-    float pulseAmp = map_range(random2d(lightningPos * (idx + 7.913) - vec2(1.7, idx)), 0.0, 1.0, 0.45, 1.25);
-    burst += pulseShape * pulseAmp * activePulse;
-  }
-
-  float quickClamp = pow(max(1.0 - strikeT / burstDuration, 0.0), 2.5);
-  return burst * quickClamp * intensitySq;
+  // Fresh, clean strike timing (reference model): the return stroke arrives as
+  // a small number of hard flashes that decay fast and then stop.
+  float T0 = Tin - 1.;
+  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
+  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
+  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
+  float T = max(mod(T0, repeatPeriod), minT);
+  return max((1. / (0.05 + pow(T * 2.0, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
 vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
@@ -283,15 +256,14 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
 
   pixVal *= currentLightningIntensity;
 
-  // ── colour the bolt by the LOCAL temperature ─────────────────────────────────
-  // The channel colour follows the same palette the temperature view uses, sampled at the
-  // fragment the bolt is drawn in, so a strike reads in the colour of the air it's in (cold
-  // decks cool, warm tropical decks warm) instead of a single hard-coded blue. The value is
-  // pushed toward white/hot on top of that base so the discharge still reads as hot plasma.
+  // ── colour the bolt violet, with a hint of the local temperature ──────────────
+  // A proper violet discharge, tinted slightly by the same temperature palette the
+  // temperature view uses (sampled where the bolt is drawn) so it is not a single
+  // hard-coded colour.
   float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
   int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
   vec3 baseTempCol = tempColorPalette[palIndex];
-  vec3 lightningCol = mix(baseTempCol, vec3(0.75, 0.5, 1.0), 0.55); // violet discharge, tinted by the local temp
+  vec3 lightningCol = mix(vec3(0.72, 0.5, 1.0), baseTempCol, 0.2); // proper violet, a hint of the local temp
 
   vec3 outputColor = max(pixVal * lightningCol, vec3(0));
 
@@ -429,57 +401,26 @@ vec4 getAirColor(vec2 fragCoordIn)
   if (lightningData[INTENSITY] > 1.0) {
     float cloudMask = clamp(cloudDensity, 0.0, 1.0);
     // the bolt channel, only where there is cloud (intra-cloud: no stroke below the deck)
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * (0.06 + 0.94 * cloudMask);
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) * (0.08 + 0.92 * cloudMask);
 
-    // the return-stroke flash: a tight hot core and a broad glow that lights the cloud from
-    // within, falling off with distance from the discharge. Strong inside the deck, faint in
-    // the surrounding air (a little scattered light) — never a full-screen wash.
+    // a soft return-stroke flash that lights the cloud from within (violet),
+    // falling off with distance from the discharge — never a full-screen wash.
     if (lightningTime > 1.0) {
       vec2 fpos = vec2(lightningPos.x - texCoord.x, lightningPos.y - texCoord.y);
       fpos.x *= aspectRatios[0];
       float fd = length(fpos);
-      float flashCore = 1.0 / (1.0 + fd * fd * 220.0); // tight hot core within the cloud
-      float flashGlow = 1.0 / (1.0 + fd * fd * 90.0); // the deck glows from within
-      emittedLight += vec3(0.78, 0.5, 1.0) * currentLightningIntensity * (4.0 * flashCore + 0.9 * flashGlow) * (0.22 + 0.78 * cloudMask); // violet flash
-
-      // ── intra-cloud arcs: a branching, jagged web of discharge in the deck ───────
-      // Real IC lightning is not one clean line — it's several faint, jagged leaders that
-      // fork and wander sideways through the cloud mass. Radiate a handful of thin, noisy
-      // channels out from the strike at different angles; each meanders (stacked sines), fades
-      // quickly with range, flickers on its own phase, and is clipped so it only exists inside
-      // cloud. The colour tints with the local temperature, like the main channel.
-      vec2 apos = vec2(texCoord.x - lightningPos.x, texCoord.y - lightningPos.y);
-      apos.x *= aspectRatios[0];
-      float adist = length(apos);
-      float aradial = smoothstep(0.34, 0.03, adist);     // fade with range from the strike
-      float strikeTempC2 = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
-      int arcPalIndex = int(clamp(map_range(strikeTempC2, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
-      vec3 baseTempColAtStrike = tempColorPalette[arcPalIndex];
-      vec3 arcBaseCol = mix(baseTempColAtStrike, vec3(0.75, 0.5, 1.0), 0.5); // violet leaders, tinted by temp
-      for (int i = 0; i < 5; i++) {
-        float fi = float(i);
-        float ang = fi * 1.2566 + 0.4 + sin(fi * 7.13) * 0.25;      // ~even fan, slightly irregular
-        float dirx = cos(ang), diry = sin(ang) * 0.55;               // squashed vertically (deck is wide)
-        float along = dot(apos, vec2(dirx, diry));                    // distance along the leader
-        float across = abs(dot(apos, vec2(-diry, dirx)));             // distance off the leader
-        // the leader meanders as it runs outward; the wiggle grows a little with range
-        float meander = sin(along * 60.0 + fi * 3.1 + iterNum * 0.6) * 0.006
-                      + sin(along * 140.0 - fi * 1.7 - iterNum * 0.4) * 0.004;
-        float chan = smoothstep(0.014, 0.0, across - abs(meander));
-        float reach = smoothstep(0.30, 0.02, along);                  // each leader dies out down-range
-        float flicker = 0.55 + 0.45 * sin(iterNum * 2.3 + fi * 2.1);
-        emittedLight += arcBaseCol * currentLightningIntensity * chan * reach * aradial * flicker * 1.5 * (0.12 + 0.88 * cloudMask);
-      }
+      float flash = 1.0 / (1.0 + fd * fd * 140.0);
+      emittedLight += vec3(0.78, 0.5, 1.0) * currentLightningIntensity * flash * (0.25 + 0.75 * cloudMask);
     }
   }
 
-#define lightningOnLightBrightness 0.020 // 0.004 : bright enough to briefly light up the scene
+#define lightningOnLightBrightness 0.010
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
   float lightningOnLight = lightningOnLightBrightness / (pow(length(dist), 2.) + 0.05);
   lightningOnLight *= currentLightningIntensity;
-  onLight += vec3(lightningOnLight) * 0.35; // IC: the ground/scene below is only faintly lit
+  onLight += vec3(lightningOnLight) * 0.4; // IC: the scene below is only faintly lit
 
   return vec4(color, opacity);
 }

@@ -55,43 +55,18 @@ const vec3 tempColorPalette[] = vec3[](vec3(1., 0.7, 1.), vec3(1., 0.5, 1.), vec
 float calcLightningTime(float startIterNum)
 {
   float lightningTime = iterNum - startIterNum;
-  return lightningTime / 8.0; // 0. to 1. leader stage, 1. + Flash stage (must match the display's pace so the glow fades with the bolt)
+  return lightningTime / 7.0; // 0. to 1. = leader stage, 1. + = flash stage (must match the display's pace so the glow fades with the bolt)
 }
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
 {
-  float strikeT = Tin - 1.0;
-  float intensitySq = pow(max(intensity, 0.0), 2.0);
-
-  if (strikeT < 0.0) {
-    float leaderRamp = smoothstep(0.65, 1.0, Tin);
-    return leaderRamp * intensitySq * 0.015;
-  }
-
-  const float burstDuration = 0.62;
-  if (strikeT > burstDuration) {
-    return 0.0;
-  }
-
-  float pulseCount = floor(map_range(random2d(lightningPos * 5.137 + vec2(0.71)), 0.0, 1.0, 4.0, 8.0));
-  float burst = 0.0;
-
-  for (int i = 0; i < 8; i++) {
-    float idx = float(i);
-    float activePulse = 1.0 - step(pulseCount, idx);
-    float pulseHash = random2d(lightningPos * (idx + 2.731) + vec2(idx * 19.17, 3.11));
-    float pulseStart = 0.015 + idx * 0.055 + pulseHash * 0.045;
-    float pulseAge = strikeT - pulseStart;
-
-    float attack = smoothstep(0.0, 0.012, pulseAge);
-    float falloff = exp(-max(pulseAge, 0.0) * map_range(pulseHash, 0.0, 1.0, 18.0, 34.0));
-    float pulseShape = attack * falloff * step(0.0, pulseAge);
-    float pulseAmp = map_range(random2d(lightningPos * (idx + 7.913) - vec2(1.7, idx)), 0.0, 1.0, 0.45, 1.25);
-    burst += pulseShape * pulseAmp * activePulse;
-  }
-
-  float quickClamp = pow(max(1.0 - strikeT / burstDuration, 0.0), 2.5);
-  return burst * quickClamp * intensitySq;
+  // Fresh, clean strike timing (must match the display so the glow fades with the bolt).
+  float T0 = Tin - 1.;
+  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
+  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
+  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
+  float T = max(mod(T0, repeatPeriod), minT);
+  return max((1. / (0.05 + pow(T * 2.0, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
 vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
@@ -134,11 +109,8 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   pixVal = max(pixVal, 0.0);
   pixVal *= currentLightningIntensity;
 
-  // colour the bolt by the LOCAL temperature (same palette as the display's bolt)
-  float strikeTempC = KtoC(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE], texCoord.y));
-  int palIndex = int(clamp(map_range(strikeTempC, -28.0, 30.0, 0.0, 28.0), 0.0, 28.0));
-  vec3 baseTempCol = tempColorPalette[palIndex];
-  vec3 lightningCol = mix(baseTempCol, vec3(1.0), 0.45); // hot core, still clearly the temp hue
+  // violet (matches the display bolt); only its luminance feeds the glow halo
+  vec3 lightningCol = vec3(0.72, 0.5, 1.0);
 
   return max(pixVal * lightningCol, vec3(0));
 }

@@ -1,114 +1,77 @@
+// Fresh lightning bolt generator.
+//
+// A single jagged, tapering main leader (thick at the top, thin at the tip) with
+// a few short, thin, jagged branches that taper to a point. The whole thing is
+// drawn in pure grayscale on an OffscreenCanvas; the display and lighting shaders
+// tint it (violet) and add the soft glow via the ambient/blur pass — so there is
+// NO baked-in glow or colour in the texture, and the bolt stays crisp and thin.
+
 onmessage = (event) => {
   const msg = event.data;
-  // console.log(msg);
-  let imgElement = generateLightningBolt(msg.width, msg.height);
-  postMessage(imgElement);
+  postMessage(generateLightningBolt(msg.width, msg.height));
 };
 
-
-function generateLightningBolt(width, height)
-{
-  const lightningCanvas = new OffscreenCanvas(width, height);
-  const ctx = lightningCanvas.getContext('2d');
-
+function generateLightningBolt(width, height) {
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, width, height);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
 
+  const mainColor = 'rgb(255,255,255)'; // the channel (bright; the display tints it violet)
+  const branchColor = 'rgb(246,246,246)'; // a touch softer, still above the display threshold
 
-  function genLightningColor(lineWidth)
-  {
-    const colR = 12;
-    const colG = 12;
-    const colB = 12;
-    brightness = Math.pow(lineWidth, 2.0);
-    return `rgb(${colR * brightness}, ${colG * brightness}, ${colB * brightness})`;
-  }
-
-
-  ctx.beginPath();
-
-  let startX = width / 2.0;
-  let startY = 0;
-  let angle = Math.PI / 6.;
-  let lineWidth = 9.0;
-  const targetAngle = 0.0;
-
-  ctx.moveTo(startX, startY);
-
-  ctx.lineWidth = lineWidth;
-
-  while (startY < height) {
-
-    const nextX = startX + Math.sin(angle);
-    const nextY = startY + Math.cos(angle);
-
-    angle += (Math.random() - 0.5) * 1.4;  // 0.7
-
-    angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
-
-    ctx.lineTo(nextX, nextY);
-
-    startX = nextX;
-    startY = nextY;
-
-
-    if (Math.random() < 0.015 * (1. - nextY / height)) { // branch
-      ctx.strokeStyle = genLightningColor(lineWidth);
-      ctx.stroke();
-      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, lineWidth * 0.5 * Math.random());
+  // One jagged, tapering channel from (x, y) running downward.
+  function drawChannel(x, y, widthTop, widthBottom, jag, color, branchChance, branchWidth) {
+    let angle = (Math.random() - 0.5) * 0.6;          // slight initial lean
+    const targetAngle = (Math.random() - 0.5) * 0.35; // the lean it drifts back toward
+    while (y < height) {
+      const step = 2.5 + Math.random() * 3.5;         // short, irregular steps
+      angle += (Math.random() - 0.5) * jag;           // strong zig-zag
+      angle -= (angle - targetAngle) * 0.09;          // steer gently back on course
+      const nx = x + Math.sin(angle) * step;
+      const ny = y + Math.cos(angle) * step;
+      const depth = Math.min(ny / height, 1.0);
+      ctx.lineWidth = widthTop + (widthBottom - widthTop) * depth; // taper with depth
+      ctx.strokeStyle = color;                          // reset (a branch may have changed it)
       ctx.beginPath();
-      ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
-      ctx.lineWidth = lineWidth;
-    }
-  }
-  ctx.strokeStyle = genLightningColor(lineWidth);
-  ctx.stroke();
+      ctx.moveTo(x, y);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      x = nx; y = ny;
 
-
-  return ctx.getImageData(0, 0, width, height);
-
-
-  function drawBranch(startX, startY, targetAngle, line_width)
-  {
-    let angle = targetAngle;
-
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineWidth = line_width;
-
-    while (startY < height) {
-
-      const nextX = startX + Math.sin(angle);
-      const nextY = startY + Math.cos(angle);
-
-      angle += (Math.random() - 0.5) * 0.7;
-
-      angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
-
-      ctx.lineTo(nextX, nextY);
-
-      startX = nextX;
-      startY = nextY;
-
-      if (Math.random() < 0.018) { // reduce width
-
-        ctx.strokeStyle = genLightningColor(line_width);
-        ctx.stroke();
-        line_width -= 0.2;
-
-        if (line_width < 0.1)
-          return;
-
-        if (Math.random() < 0.1) { // branch 0.005
-
-          drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, line_width);
-        }
-
-        ctx.beginPath();
-        ctx.moveTo(nextX, nextY); // move back to last position after drawing branch
-        ctx.lineWidth = line_width;
+      if (branchChance > 0 && Math.random() < branchChance * (1.0 - depth)) {
+        drawBranch(x, y, targetAngle + (Math.random() - 0.5) * 1.7,
+                   branchWidth * (0.6 + Math.random() * 0.8));
       }
     }
-    ctx.strokeStyle = genLightningColor(line_width);
-    ctx.stroke();
   }
+
+  // A short, thin, jagged branch that tapers to a point.
+  function drawBranch(x, y, baseAngle, widthTop) {
+    let angle = baseAngle;
+    const startY = y;
+    const len = (0.12 + Math.random() * 0.22) * height; // branches are short
+    const endY = y + len;
+    ctx.strokeStyle = branchColor;
+    while (y < endY) {
+      const step = 2.5 + Math.random() * 3.5;
+      angle += (Math.random() - 0.5) * 0.8;             // jagged
+      angle -= (angle - baseAngle) * 0.10;              // drift back toward the base lean
+      const nx = x + Math.sin(angle) * step;
+      const ny = y + Math.cos(angle) * step;
+      const t = Math.min((ny - startY) / len, 1.0);
+      ctx.lineWidth = Math.max(widthTop * (1.0 - t * 0.85), 0.4); // taper to a point
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      x = nx; y = ny;
+    }
+  }
+
+  // the main leader: thick at the top, tapering to a thin tip near the bottom
+  drawChannel(width / 2.0, 0, 7.0, 2.0, 0.7, mainColor, 0.03, 2.4);
+
+  return ctx.getImageData(0, 0, width, height);
 }
