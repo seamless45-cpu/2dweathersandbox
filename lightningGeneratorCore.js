@@ -35,7 +35,7 @@ function generateLightningBoltImageData(width, height, createCanvas)
   let angle = (Math.random() - 0.5) * 0.4;        // Start nearly vertical
   let lineWidth = 5.0 + Math.random() * 3.0;      // Slightly varied thickness
   const targetAngle = 0.0;                         // 0 = straight down
-  const maxBranches = 110;                         // enough leaders for a real web
+  const maxBranches = 34;                          // a handful of true leaders, not a tree
   let numBranches = 0;
 
   while (currY < height) {
@@ -51,13 +51,15 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
     addSegment(currX, currY, nextX, nextY, lineWidth, true);
 
-    // Branching: more frequent in upper 60% of bolt, rare near ground
+    // Branching: more frequent in upper 60% of bolt, rare near ground. THIN leaders that fork
+    // out from the main channel — real lightning branches are much thinner than the stroke,
+    // so keep them a small fraction of the bolt width (NOT tree-branch thick).
     const heightFactor = 1 - (currY / height) * 0.7;
-    if (numBranches < maxBranches && Math.random() < 0.09 * heightFactor) {
+    if (numBranches < maxBranches && Math.random() < 0.05 * heightFactor) {
       numBranches++;
       // Branches angle outward and downward; rarely go upward
-      const branchAngle = angle + (Math.random() - 0.5) * 2.2;
-      const branchWidth = lineWidth * (0.45 + Math.random() * 0.45); // thicker, clearly visible leaders
+      const branchAngle = angle + (Math.random() - 0.5) * 2.4;
+      const branchWidth = Math.max(1.1, lineWidth * (0.16 + Math.random() * 0.20)); // thin, ~1-2px leaders
       drawBranch(nextX, nextY, branchAngle, branchWidth);
     }
 
@@ -90,16 +92,15 @@ function generateLightningBoltImageData(width, height, createCanvas)
 
       addSegment(x, y, nextX, nextY, w, false);
 
-      // Branches fade gradually (a bit faster than the main bolt) so they stay visible as real
-      // tapering leaders over most of their length instead of collapsing to a dot in two steps.
-      w *= 0.78;
-      if (Math.random() < 0.05) w *= 0.6;
+      // Thin leaders taper out quickly — a few short steps, not a long spreading limb.
+      w *= 0.6;
+      if (Math.random() < 0.06) w *= 0.5;
 
-      // Occasional secondary branching for a true forking web
-      if (numBranches < maxBranches && Math.random() < 0.05) {
+      // Rare secondary fork (keeps the web light, never tree-like)
+      if (numBranches < maxBranches && Math.random() < 0.02) {
         numBranches++;
         const subAngle = angle + (Math.random() - 0.5) * 1.6;
-        drawBranch(nextX, nextY, subAngle, w * 0.7);
+        drawBranch(nextX, nextY, subAngle, w * 0.5);
       }
 
       x = nextX;
@@ -111,29 +112,28 @@ function generateLightningBoltImageData(width, height, createCanvas)
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Pass 1: Wide atmospheric glow
-  ctx.shadowBlur = 0;
-  ctx.shadowColor = 'rgba(100, 160, 255, 0.4)';
+  // Pass 1: Wide atmospheric glow — a genuinely broad, faint halo around the whole discharge.
+  // (Was s.width*0.1, i.e. sub-pixel, so the texture carried no bloom at all.)
+  ctx.globalCompositeOperation = 'lighter';
   for (const s of segments) {
     ctx.beginPath();
     ctx.moveTo(s.x1, s.y1);
     ctx.lineTo(s.x2, s.y2);
-    ctx.lineWidth = s.width * 0.1;
-    ctx.strokeStyle = getGlowColor(s.width);
+    ctx.lineWidth = s.width * (s.isMainBolt ? 5.0 : 4.0);
+    ctx.strokeStyle = 'rgba(120, 150, 255, 0.10)';
     ctx.stroke();
   }
 
-  // Pass 2: Medium glow
-  ctx.shadowBlur = 0;
-  ctx.shadowColor = 'rgba(180, 210, 255, 0.5)';
+  // Pass 2: Medium glow — a tighter, brighter ring between the halo and the core.
   for (const s of segments) {
     ctx.beginPath();
     ctx.moveTo(s.x1, s.y1);
     ctx.lineTo(s.x2, s.y2);
-    ctx.lineWidth = s.width * 0.1;
-    ctx.strokeStyle = getGlowColor(s.width);
+    ctx.lineWidth = s.width * (s.isMainBolt ? 2.2 : 2.0);
+    ctx.strokeStyle = 'rgba(170, 195, 255, 0.28)';
     ctx.stroke();
   }
+  ctx.globalCompositeOperation = 'source-over';
 
   // Pass 3: Bright core
   ctx.shadowBlur = 0;

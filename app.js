@@ -5814,12 +5814,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
         }
 
-        if (lineWidth > 0.6 && Math.random() < 0.03 * (1.0 - y / height))
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, Math.max(1.2, lineWidth * 0.75), Math.floor(maxLength * 0.9)); // thicker, longer branches
+        // Thin, short leader branches (real lightning forks, not thick tree limbs): ~1px, a few
+        // of them, mostly up high.
+        if (lineWidth > 0.6 && Math.random() < 0.018 * (1.0 - y / height))
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, Math.max(0.9, lineWidth * 0.32), Math.floor(maxLength * 0.55));
       }
     }
 
-    drawBolt(width / 2, 0, Math.PI / 12, 3.0, height);
+    drawBolt(width / 2, 0, Math.PI / 12, 3.2, height);
     generateLightningTexture(i, new ImageData(data, width, height));
   }
 
