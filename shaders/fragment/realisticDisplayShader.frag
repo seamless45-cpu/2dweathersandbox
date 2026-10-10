@@ -393,6 +393,17 @@ vec4 getAirColor(vec2 fragCoordIn)
     // kills the bolt where the cloud is thin, so it read as "not reaching the ground / too dim";
     // *40 keeps the cloud-occlusion effect but lets the bolt punch through to the ground.
     emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 40.0);
+
+    // BLOOM: a soft violet glow around the bolt, added as PURE emitted light (NOT onLight) so
+    // it reads even over a bright sky — the onLight/ambient version washed out because the
+    // scene is already lit. It's stretched vertically to span the bolt (cloud -> ground) with a
+    // tight Gaussian falloff around the bolt's x, so it hugs the stroke and flares outward.
+    // Scaled by the flash so it flares and fades with the strike.
+    float boltLen = max(lightningPos.y, 0.2);
+    float bdx = (texCoord.x - lightningPos.x) * aspectRatios[0];
+    float bdy = (texCoord.y - lightningPos.y * 0.5) / boltLen; // -0.5 (ground) .. +0.5 (cloud)
+    float bloomR2 = (bdx * bdx) / (0.05 * 0.05) + (bdy * bdy) / (0.5 * 0.5);
+    emittedLight += vec3(0.62, 0.5, 1.0) * exp(-bloomR2) * currentLightningIntensity * 100.0;
   }
 
 // a position-based flash that lights the scene around the bolt. The stock's 0.004 is a barely
