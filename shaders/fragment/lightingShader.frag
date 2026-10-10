@@ -60,12 +60,8 @@ float calcLightningTime(float startIterNum)
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
 {
-  float T0 = Tin - 1.;
-  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
-  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
-  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
-  float T = max(mod(T0, repeatPeriod), minT);
-  // Fade 40% faster than the stock (in step with the display shader's bolt).
+  // Single smooth flash (in step with the display shader's bolt) — no uneven multi-pulse flicker.
+  float T = max(Tin - 1., 0.);
   return max((1. / (0.05 + pow(T * 2.8, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
@@ -108,6 +104,9 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   pixVal -= brightnessThreshold;
   pixVal = max(pixVal, 0.0);
   pixVal *= currentLightningIntensity;
+
+  // Ground-reach ramp (matches the display shader) so the glow halo also reaches the ground.
+  pixVal *= 1.0 + 0.8 * smoothstep(0.55, 1.0, lightningTexCoord.y);
 
   // violet (matches the display bolt); only its luminance feeds the glow halo
   vec3 lightningCol = vec3(0.72, 0.5, 1.0);
@@ -328,7 +327,10 @@ void main()
         float lightningTime = calcLightningTime(lightningData[START_ITERNUM]);
         float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
         float cloudMask = clamp(max(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0), 0.0, 1.0);
-        vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.06 + 0.94 * cloudMask);
+        // The 0.06 base (stock) cut the glow almost entirely where there is no cloud (the lower
+        // half of the bolt), so the halo stopped short of the ground. Raise the base so the glow
+        // carries down the full length of the bolt.
+        vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.18 + 0.82 * cloudMask);
         reflectedLight.a = max(max(bolt.r, bolt.g), bolt.b);
       }
     }

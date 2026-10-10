@@ -84,8 +84,10 @@ function generateLightningBolt(width, height) {
     }
   }
 
-  // the main leader: thick at the top, tapering to a thin tip near the bottom
-  drawChannel(width / 2.0, 0, 7.0, 2.0, 0.7, mainColor, 0.03, 2.4);
+  // the main leader: thick at the top, tapering toward a still-visible tip at the ground.
+  // widthBottom stays >= ~3px so the very end of the bolt (mapped to the ground) is not a
+  // faint 1-2px thread that vanishes after the cloud attenuation -> the bolt visibly reaches down.
+  drawChannel(width / 2.0, 0, 7.0, 3.5, 0.7, mainColor, 0.03, 2.6);
 
   return ctx.getImageData(0, 0, width, height);
 }

@@ -204,15 +204,10 @@ float calcLightningTime(float startIterNum)
 
 float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
 {
-  // The stock reference's clean flicker: the return stroke arrives as a small number of
-  // decaying flashes, then stops.
-  float T0 = Tin - 1.;
-  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
-  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
-  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
-  float T = max(mod(T0, repeatPeriod), minT);
-  // Fade 40% faster than the stock: T*2.8 == (T*1.4)*2.0, so the intensity hits any given
-  // fraction ~40% sooner while keeping the same peak.
+  // A single smooth flash: the return stroke arrives and decays continuously instead of the
+  // old multi-pulse flicker, which dropped in uneven steps ("fades unevenly"). The decay keeps
+  // the 40%-faster rate (T*2.8) so the flash still snaps on and off quickly.
+  float T = max(Tin - 1., 0.);
   return max((1. / (0.05 + pow(T * 2.8, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
 }
 
@@ -257,6 +252,11 @@ vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningInten
   pixVal = max(pixVal, 0.0);
 
   pixVal *= currentLightningIntensity;
+
+  // The bolt's tip (lightningTexCoord.y -> 1) maps to the ground. The cloud attenuation and the
+  // fast flash can cut the very end, so add a brightness ramp toward the tip so the bolt visibly
+  // reaches the ground instead of stopping partway down.
+  pixVal *= 1.0 + 0.8 * smoothstep(0.55, 1.0, lightningTexCoord.y);
 
   const vec3 lightningCol = vec3(0.70, 0.57, 1.0); // the stock reference's violet
 
@@ -388,14 +388,16 @@ vec4 getAirColor(vec2 fragCoordIn)
   float currentLightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
 
   if (lightningData[INTENSITY] > 1.0) { // CG
-    // the bolt channel, exactly as the stock RealisticDisplayShader: the stock divides its whole
-    // emittedLight by (1+cloud*100); here emittedLight also holds fire/city/sun, so we divide the
-    // bolt term alone (identical effect on the lightning itself).
-    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 100.0);
+    // The stock divides its whole emittedLight by (1+cloud*100); here emittedLight also holds
+    // fire/city/sun, so we divide the bolt term alone. The stock's *100 is a hard dimmer that
+    // kills the bolt where the cloud is thin, so it read as "not reaching the ground / too dim";
+    // *40 keeps the cloud-occlusion effect but lets the bolt punch through to the ground.
+    emittedLight += displayLightning(lightningPos, lightningTime, currentLightningIntensity) / (1. + cloudDensity * 40.0);
   }
 
-// the stock reference's glow: a position-based flash that lights the scene around the bolt
-#define lightningOnLightBrightness 0.004 // 0.002
+// a position-based flash that lights the scene around the bolt. The stock's 0.004 is a barely
+// visible flash; raised to 0.02 so the strike reads as a real bloom/halo, not just a bolt line.
+#define lightningOnLightBrightness 0.02 // 0.004 (stock) 0.002
 
   vec2 dist = vec2(lightningPos.x - texCoord.x, max((abs(lightningPos.y / 2. - texCoord.y) - 0.1), 0.));
   dist.x *= aspectRatios[0];
