@@ -27,6 +27,7 @@ uniform float IR_rate;
 
 uniform float greenhouseGases;
 uniform float waterGreenHouseEffect;
+uniform float waterTemperature; // configured temperature of lake / sea surfaces, in Kelvin
 
 layout(location = 0) out vec4 light;
 layout(location = 1) out vec4 reflectedLight;
@@ -34,6 +35,86 @@ layout(location = 1) out vec4 reflectedLight;
 uniform float dryLapse;
 
 #include "common.glsl"
+
+// ───────────────────────── lightning emission ─────────────────────────
+// The strike is written into the ALPHA of the emitted-light buffer (reflectedLight.a).
+// The ambient-light blur chain then diffuses it, and the display shader adds that
+// channel back unclamped as the strike's glow/halo — the same tone-mapped ambient path
+// fire and city lights use, so there is no separate post-process bloom.
+uniform sampler2D lightningTex;
+uniform sampler2D lightningDataTex;
+uniform float iterNum;
+uniform vec2 aspectRatios; // [0] sim       [1] canvas
+
+const vec2 lightningTexRes = vec2(1024, 2048);
+const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
+
+const vec3 tempColorPalette[] = vec3[](vec3(1., 0.7, 1.), vec3(1., 0.5, 1.), vec3(1., 0.3, 1.), vec3(0.8, 0., 0.8), vec3(0.65, 0., 0.6), vec3(0.5, 0., 0.5), vec3(0.35, 0., 0.6), vec3(0., 0., 0.7), vec3(0., 0., 1.), vec3(0., 0.30, 1.), vec3(0., 0.44, 1.), vec3(0., 0.62, 1.0), vec3(0., 0.80, 1.0), vec3(0., 1., 1.), vec3(0., 0.50, 0.), vec3(0., 0.61, 0.0), vec3(0., 0.72, 0.), vec3(0., 0.85, 0.),
+                                       vec3(0., 1., 0.), vec3(0.5, 1., 0.), vec3(0.80, 1., 0.), vec3(1., 1., 0.), vec3(1., 0.8, 0.), vec3(1., 0.6, 0.), vec3(1., 0.4, 0.), vec3(1., 0., 0.), vec3(0.85, 0., 0.), vec3(0.72, 0., 0.), vec3(0.61, 0., 0.), vec3(0.52, 0., 0.));
+
+float calcLightningTime(float startIterNum)
+{
+  float lightningTime = iterNum - startIterNum;
+  return lightningTime / 5.0; // must match the display's pace (stock /5.0) so the glow fades with the bolt
+}
+
+float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
+{
+  float T0 = Tin - 1.;
+  float repeatPeriod = map_range(random2d(lightningPos), 0., 1., 1.5, 3.0);
+  float numFlashes = floor(map_range(random2d(lightningPos * 2.737250), 0., 1., 1.0, max(intensity - 0.5, 0.) * 2.0));
+  float minT = max(T0 - (repeatPeriod * numFlashes), 0.);
+  float T = max(mod(T0, repeatPeriod), minT);
+  // Fade 40% faster than the stock (in step with the display shader's bolt).
+  return max((1. / (0.05 + pow(T * 2.8, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
+}
+
+vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
+{
+  vec2 lightningTexCoord = texCoord;
+
+  lightningTexCoord.x -= mod(pos.x, 1.);
+
+  lightningTexCoord.y -= pos.y;
+
+  float scaleMult = 1. / pos.y; // 1.0 means lightning is as tall as the simheight
+
+  lightningTexCoord.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
+  lightningTexCoord.y *= -scaleMult;
+
+  lightningTexCoord.x += 0.5;
+
+  if (lightningTexCoord.x < 0.01 || lightningTexCoord.x > 1.01 || lightningTexCoord.y < 0.01 || lightningTexCoord.y > 1.01)
+    return vec3(0);
+
+  float pixVal = texture(lightningTex, lightningTexCoord).r;
+
+  const float branchShowFactor = 2.5;
+  const float leaderBrightness = 50000.;
+  const float mainBoltBrightness = 100000.;
+
+  float brightnessThreshold = 1. - lightningTime * branchShowFactor;
+  brightnessThreshold += lightningTexCoord.y * branchShowFactor;
+
+  brightnessThreshold = clamp(brightnessThreshold, 0., 1.);
+
+  if (lightningTime > 1.0) { // main bolt
+    brightnessThreshold = 0.95;
+    currentLightningIntensity *= mainBoltBrightness;
+  } else {
+    currentLightningIntensity = leaderBrightness;
+  }
+
+  pixVal -= brightnessThreshold;
+  pixVal = max(pixVal, 0.0);
+  pixVal *= currentLightningIntensity;
+
+  // violet (matches the display bolt); only its luminance feeds the glow halo
+  vec3 lightningCol = vec3(0.72, 0.5, 1.0);
+
+  return max(pixVal * lightningCol, vec3(0));
+}
+
 
 // ========================= reworked longwave IR =========================
 // The IR fluxes no longer crawl forward one cell per iteration. Each lighting
@@ -43,17 +124,19 @@ uniform float dryLapse;
 // The whole atmospheric column therefore converges to radiative equilibrium
 // in roughly resolution.y / IR_STEP iterations, and the fluxes also react
 // IR_STEP times faster to changing temperatures, clouds and surfaces.
-#define IR_STEP 8
+#define IR_STEP 1
 
 // How opaque one air cell is to longwave radiation (Kirchhoff: emissivity == absorptivity)
 float airEmissivity(vec4 waterSample, float heightComp)
 {
   float emissivity = greenhouseGases;                          // greenhouse gasses
-  emissivity += waterSample[TOTAL] * waterGreenHouseEffect;    // water vapor
-  emissivity += waterSample[CLOUD] * 5.0;                      // cloud water blocks all IR
+  emissivity += max(waterSample[TOTAL], 0.0) * waterGreenHouseEffect; // water vapor (wall indicators also make terrain opaque, as they should)
+  emissivity += max(waterSample[CLOUD], 0.0) * 5.0;            // cloud water blocks all IR
                                                                // smoke is mostly transparent to IR
   emissivity *= heightComp;                                    // compensate for the height of the cell
 
+  if (!(emissivity == emissivity)) // NaN, because a cell contained a corrupted water value
+    return 1.0;                  // treat it as opaque instead of letting NaN into the heating of the air
   return min(emissivity, 1.0);                                 // limit to 1.0
 }
 
@@ -61,18 +144,34 @@ float airEmissivity(vec4 waterSample, float heightComp)
 // transmittance of the column is (1 - e)^numCells
 float columnOpacity(float e, float numCells) { return 1.0 - pow(max(1.0 - e, 0.0), numCells); }
 
-// Real (not potential) air temperature at any texCoord
-float airTempAt(vec2 tc) { return potentialToRealT(texture(baseTex, tc)[TEMPERATURE], tc.y); }
+// Real (not potential) air temperature at any texCoord, limited to the physical range so that a
+// corrupted cell can never emit an infinite amount of longwave radiation
+float airTempAt(vec2 tc) { return cleanTempK(potentialToRealT(texture(baseTex, tc)[TEMPERATURE], tc.y)); }
 
 // Surfaces radiate like black bodies (emissivity = 1.0) at their own temperature.
-// Wall cells store their real temperature directly in baseTex.
-float surfaceEmission(ivec4 wallSample, vec2 tc)
+// Only water surfaces actually store their real temperature in baseTex: every other wall type
+// stores the 1000.0 "no snow melt" indicator that the pressure shader reads (see advectionShader),
+// which is NOT a temperature. Radiating that as a black body means 56 MW/m², which cooled the
+// entire boundary layer by ~0.1 K per iteration until the temperature went below absolute zero.
+// maxWater() turns into NaN at negative temperatures, so that is a vapor explosion: the skin
+// temperature of dry surfaces is therefore taken from the air cell next to them, like before the
+// IR rework, and everything is limited to the physical range afterwards.
+float surfaceSkinTemp(ivec4 wallSample, vec2 wallTC, vec2 airTC)
 {
-  float T = texture(baseTex, tc)[TEMPERATURE];
+  if (wallSample[TYPE] == WALLTYPE_WATER) {
+    float T = texture(baseTex, wallTC)[TEMPERATURE]; // real water temperature in Kelvin
+    if (!(T > 100.0) || T > 500.0)                   // NaN or the wall indicator of older save files
+      T = waterTemperature;                          // fall back to the configured water temperature
+    return cleanTempK(T);
+  }
+
+  float T = potentialToRealT(texture(baseTex, airTC)[TEMPERATURE], airTC.y); // the air just above/below the surface
   if (wallSample[TYPE] == WALLTYPE_FIRE)
     T += 100.0; // fire emits extra heat
-  return IR_emitted(T);
+  return cleanTempK(T);
 }
+
+float surfaceEmission(ivec4 wallSample, vec2 wallTC, vec2 airTC) { return IR_emitted(surfaceSkinTemp(wallSample, wallTC, airTC)); }
 // ========================================================================
 
 void main()
@@ -89,7 +188,7 @@ void main()
     float sunlight = texture(lightTex, texCoord + sunRay)[SUNLIGHT];
     // float sunlight = bilerp(lightTex, fragCoord + vec2(sin(sunAngle) ,
 
-    float realTemp = potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE]);
+    float realTemp = cleanTempK(potentialToRealT(texture(baseTex, texCoord)[TEMPERATURE]));
     vec4 water = texture(waterTex, texCoord);
     ivec4 wall = texture(wallTex, texCoord);
 
@@ -133,7 +232,7 @@ void main()
       float IR_down;
 
       if (texture(wallTex, tcUp)[DISTANCE] == 0) { // a surface / ceiling is within IR_STEP cells above
-        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp);
+        IR_down = surfaceEmission(texture(wallTex, tcUp), tcUp, tcUp - vec2(0.0, texelSize.y)); // the air cell right below the ceiling
       } else {
         float eMid = airEmissivity(texture(waterTex, tcUpMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));
@@ -150,7 +249,7 @@ void main()
         float eLocal = airEmissivity(water, cellHeightCompensation);
         float cellsToSurface = clamp(float(wall[VERT_DISTANCE] - 1), 0.0, float(IR_STEP)); // air cells in between
         float tau = columnOpacity(eLocal, cellsToSurface);
-        IR_up = mix(surfaceEmission(wallBelowFar, tcDn), IR_emitted(realTemp), tau);
+        IR_up = mix(surfaceEmission(wallBelowFar, tcDn, tcDn + vec2(0.0, texelSize.y)), IR_emitted(cleanTempK(realTemp)), tau); // the air cell right above the ground
       } else {
         float eMid = airEmissivity(texture(waterTex, tcDnMid), cellHeightCompensation);
         float tau = columnOpacity(eMid, float(IR_STEP));
@@ -188,7 +287,7 @@ void main()
         // re-emit at this cell's own temperature (Stefan-Boltzmann)
         float emissivity = airEmissivity(water, cellHeightCompensation);
 
-        float emitted = IR_emitted(realTemp) * emissivity; // this amount is emitted both up and down
+        float emitted = IR_emitted(cleanTempK(realTemp)) * emissivity; // this amount is emitted both up and down
 
         net_heating += ((IR_down + IR_up) * emissivity - emitted * 2.0) * lightHeatingConst;
       }
@@ -217,6 +316,20 @@ void main()
 
         light = vec4(0.0, 0, 0, 0); // all light absorbed by ground
         reflectedLight.rgb += lightReflected / standardSunBrightness;
+      }
+    }
+
+    // ── lightning strike → glow (alpha of the emitted-light buffer) ──────────────
+    reflectedLight.a = 0.0;
+    {
+      vec4 lightningData = texture(lightningDataTex, vec2(0.5));
+      if (lightningData[INTENSITY] > 1.0) {
+        vec2 lightningPos = lightningData.xy;
+        float lightningTime = calcLightningTime(lightningData[START_ITERNUM]);
+        float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
+        float cloudMask = clamp(max(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0), 0.0, 1.0);
+        vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.06 + 0.94 * cloudMask);
+        reflectedLight.a = max(max(bolt.r, bolt.g), bolt.b);
       }
     }
   }

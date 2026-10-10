@@ -16,41 +16,74 @@ uniform vec2 texelSize;
 uniform float exposure;
 
 uniform sampler2D hdrTex;
-uniform sampler2D bloomTex;
 out vec4 fragmentColor;
 
 
 #include "commonDisplay.glsl"
 
+// ── tone mapping ────────────────────────────────────────────────────────────────
+// ACES filmic tone mapping curve. This gives a natural highlight rolloff,
+// preserves saturation in bright areas, and produces a cinematic look.
+// Based on the ACES reference implementation (simplified for real-time).
+vec3 ACESFilm(vec3 x)
+{
+  float a = 2.51;
+  float b = 0.03;
+  float c = 2.43;
+  float d = 0.59;
+  float e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// Extended Reinhard as fallback / secondary curve
+vec3 reinhardToneMap(vec3 x)
+{
+  const float whitePoint = 2.2;
+  return clamp(x * (1.0 + x / (whitePoint * whitePoint)) / (1.0 + x), 0.0, 1.0);
+}
+
+// Interleaved gradient noise for dithering
+float interleavedGradientNoise(vec2 pixel)
+{
+  return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
 void main()
 {
+  // No bloom pass any more: the screen-wide blur was adding a large, blurred copy of the bright
+  // parts of the frame on top of everything (the bright-extraction ramp was about fifty times
+  // stronger than the one it replaced), which is what made the image both washed out and soft.
+  // The scene is rendered straight into a linear HDR buffer and tone mapped here.
   vec3 outputCol = texture(hdrTex, texCoord).rgb;
-
-  vec3 bloom = texture(bloomTex, texCoord).rgb;
-
-  outputCol += bloom * 0.990; // apply bloom
-
-  // outputCol = outputCol / (outputCol + vec3(1.0)) * 1.1; // Tone mapping
 
   outputCol *= exposure;
 
-  outputCol = pow(outputCol, ONE_OVER_GAMMA); // gamma correction
+  // 1. ACES filmic tone mapping: natural highlight rolloff with good saturation
+  outputCol = ACESFilm(outputCol);
 
+  // 2. gamma correction
+  outputCol = pow(outputCol, ONE_OVER_GAMMA);
 
-  /*
-    { // Gamma correction test: left without, right with gamma correction
-      float modTexCoordx = mod(texCoord.x, 0.5);
-      // outputCol = vec3(pow(texCoord.y, 2.)); // light input
+  // 3. gentle S-curve for contrast. Kept subtle: it lifts everything above middle grey, and a
+  //    strong curve was part of why the daylight image read as overexposed.
+  outputCol = mix(outputCol, outputCol * outputCol * (3.0 - 2.0 * outputCol), 0.12);
 
-      outputCol = vec3(pow(0.9, (1. - texCoord.y) * 50.)); // simulate light coming down and being absorbed by clouds
+  // 4. saturation: a small boost to offset what the tone curve takes out of bright areas
+  float luma = dot(outputCol, vec3(0.2126, 0.7152, 0.0722));
+  outputCol = clamp(mix(vec3(luma), outputCol, 1.10), 0.0, 1.0);
 
-      if (texCoord.x > 0.5)
-        outputCol = pow(outputCol, GAMMA);              // gamma correction
+  // 5. subtle vignette: darken the edges to draw focus to the center.
+  // Uses squared distance to avoid the sqrt() in length() for performance.
+  vec2 vigCoord = texCoord - vec2(0.5);
+  vigCoord.x *= 0.7;
+  float vigDist2 = dot(vigCoord, vigCoord); // squared distance, no sqrt needed
+  float vignette = 1.0 - smoothstep(0.12, 0.72, vigDist2) * 0.28;
+  outputCol *= vignette;
 
-      if (abs(outputCol.r - modTexCoordx * 2.) < 0.001) // plot brightness
-        outputCol = vec3(1.0, 0., 0.);
-    }
-  */
+  // 6. dither to remove banding in smooth gradients.
+  // Use texCoord scaled to approximate pixel space for the noise pattern.
+  vec2 ditherCoord = texCoord * 1000.0;
+  outputCol += (interleavedGradientNoise(ditherCoord) - 0.5) / 255.0;
 
-  fragmentColor = vec4(outputCol, 1.0);
+  fragmentColor = vec4(clamp(outputCol, 0.0, 1.0), 1.0);
 }

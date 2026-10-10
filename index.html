@@ -4,260 +4,497 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>2D Weather Sandbox</title>
+    <link rel="preload" as="image" href="resources/img/loading-bg.jpg" fetchpriority="high" />
     <script type="text/javascript" src="libraries/dat.gui.min.js"></script>
     <script type="text/javascript" src="libraries/pako.min.js"></script>
     <script type="text/javascript" src="libraries/chart.js"></script>
     <script type="text/javascript" src="libraries/chartjs-adapter-date-fns.js"></script>
     <script type="text/javascript" src="app.js"></script>
     <link rel="shortcut icon" type="image/x-icon" href="296027059_1784035083155840.jpg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Chakra+Petch:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg0:#030a10; --bg1:#071722;
-            --panel:#0a1b26; --panel2:#0e2331;
-            --line:#16405a; --line-hi:#2f7ba3;
-            --cyan:#4fe3ff; --cyan-soft:rgba(79,227,255,.13);
-            --amber:#ffb454; --green:#5df5a4; --red:#ff5470;
-            --txt:#c9dde8; --dim:#5e7f90;
-            --disp:'Orbitron',sans-serif; --body:'Chakra Petch',sans-serif; --mono:'Share Tech Mono',monospace;
-            /* preserved tokens */
-            --text-color:#c9dde8; --accent-color:#4fe3ff; --hover-color:#4fe3ff;
-            --border-radius:0px; --transition-speed:0.3s; --shadow:0 0 18px rgba(79,227,255,.10);
-            --soft-gradient:linear-gradient(180deg,var(--panel2),var(--panel));
-            --size:50px;
+            --bg: #0d1117;
+            --bg-alt: #161b22;
+            --panel: #10151d;
+            --panel-border: #262d38;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-hover: #79b8ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --error: #f85149;
+            --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --font-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+            --radius: 6px;
+            --shadow: 0 1px 3px rgba(0,0,0,0.4);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.45);
+            --size: 50px;
         }
-        * { box-sizing:border-box }
-        html { scroll-behavior:smooth }
-        /* PERF: solid base; decorative layers on a static fixed ::before (no background-attachment:fixed) */
-        body { margin:0; font-family:var(--body); color:var(--txt); line-height:1.6; overflow-x:hidden; background:#030a10; }
-        body::before{
-            content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
-            background:
-                radial-gradient(1100px 640px at 80% -8%, rgba(31,86,120,.30), transparent 60%),
-                radial-gradient(900px 620px at 4% 108%, rgba(20,70,90,.26), transparent 60%),
-                repeating-linear-gradient(0deg, rgba(79,227,255,.026) 0 1px, transparent 1px 46px),
-                repeating-linear-gradient(90deg, rgba(79,227,255,.026) 0 1px, transparent 1px 46px),
-                linear-gradient(rgba(3,10,16,.90), rgba(3,10,16,.94)),
-                url('resources/img/Screenshot_2025-09-09-20-04-46-81_519dd438856772e7f7134c9b52cd9f52.jpg') center/cover;
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            margin: 0;
+            font-family: var(--font);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+            background: var(--bg);
         }
-        /* ── kill all setup chrome the moment the simulation takes over ── */
         body.sim-active .main-nav,
-        body.sim-active #IntroScreen { display:none !important; }
-        body.sim-active::before { display:none; }
-        body.sim-active { background:#000; }
+        body.sim-active #IntroScreen { display: none !important; }
+        body.sim-active { background: #000; }
 
-        ::selection{background:var(--cyan);color:#03222e}
-        ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#071219}
-        ::-webkit-scrollbar-thumb{background:var(--line)}::-webkit-scrollbar-thumb:hover{background:var(--line-hi)}
-        @keyframes blink{50%{opacity:.3}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        /* PERF: skip rendering offscreen lower sections */
-        .lazy{content-visibility:auto;contain-intrinsic-size:640px}
+        ::selection { background: var(--accent); color: white; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-alt); }
+        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        .lazy { content-visibility: auto; contain-intrinsic-size: 640px; }
 
         /* ===== NAV ===== */
-        .main-nav{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;
-            padding:10px 24px;background:linear-gradient(180deg,rgba(12,33,48,.96),rgba(8,23,34,.96));
-            backdrop-filter:blur(10px);z-index:50;border-bottom:1px solid var(--line);box-shadow:0 2px 20px rgba(0,0,0,.5)}
-        .main-nav::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
-            background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.6}
-        .nav-title{display:flex;align-items:center;gap:14px}
-        .glyph{width:32px;height:32px;position:relative;flex:0 0 auto}
-        .glyph::before,.glyph::after{content:'';position:absolute;inset:0;border:2px solid var(--cyan);
-            clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);animation:spin 9s linear infinite}
-        .glyph::after{inset:7px;border-color:var(--amber);animation-direction:reverse;animation-duration:6s}
-        .nav-title h1{margin:0;font-family:var(--disp);font-weight:900;font-size:1.25rem;letter-spacing:.16em;color:#eef8ff;
-            text-shadow:0 0 16px rgba(79,227,255,.45)}
-        .nav-title h1 small{display:block;font-family:var(--mono);font-weight:400;font-size:.5rem;letter-spacing:.4em;color:var(--amber);margin-top:3px}
-        .nav-icons{display:flex;padding-top:0;gap:1.2rem;align-items:center}
-        .nav-icons img{height:50px;width:auto;transition:all .3s ease;opacity:.9}
-        .nav-icons a:hover img{transform:scale(1.1);opacity:1}
-        .led{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:.55rem;letter-spacing:.22em;color:var(--dim)}
-        .led i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.7s infinite}
-        .led.c i{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
-        #navClock{font-family:var(--mono);font-size:.9rem;color:var(--cyan);text-shadow:0 0 8px rgba(79,227,255,.5)}
-        .sfx-btn{font-family:var(--mono);font-size:.55rem;letter-spacing:.2em;color:var(--cyan);background:#0a1e2b;
-            border:1px solid var(--line-hi);padding:6px 12px;cursor:pointer;transition:.2s}
-        .sfx-btn:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(79,227,255,.3)}
-        .sfx-btn.off{color:var(--dim);border-color:var(--line)}
-        @media(max-width:820px){.led{display:none}}
+        .main-nav {
+            position: fixed; top: 0; left: 0; right: 0;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 24px;
+            background: var(--bg);
+            border-bottom: 1px solid var(--panel-border);
+            z-index: 50;
+            box-shadow: var(--shadow);
+        }
+        .nav-title { display: flex; align-items: center; gap: 12px; }
+        .nav-title h1 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text);
+            letter-spacing: -0.01em;
+        }
+        .nav-title h1 small {
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 400;
+            color: var(--text-muted);
+            margin-top: 2px;
+            letter-spacing: 0;
+        }
+        .nav-icons { display: flex; gap: 16px; align-items: center; }
+        .nav-icons img { height: 32px; width: auto; opacity: 0.7; transition: opacity 0.2s; }
+        .nav-icons a:hover img { opacity: 1; }
+        #navClock {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+        .sfx-btn {
+            font-family: var(--font);
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text);
+            background: var(--bg-alt);
+            border: 1px solid var(--panel-border);
+            padding: 6px 14px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .sfx-btn:hover { background: var(--panel-border); }
+        .sfx-btn.off { color: var(--text-muted); }
 
         /* ===== LAYOUT ===== */
-        #IntroScreen{padding:20px;max-width:1200px;margin:20px auto;animation:fadeIn .8s ease-in-out;position:relative;z-index:1}
-        .sec-h{display:flex;align-items:center;gap:14px;margin:46px 0 18px}
-        .sec-idx{font-family:var(--disp);font-weight:900;font-size:1.9rem;color:transparent;-webkit-text-stroke:1px var(--line-hi)}
-        .sec-h h2{font-family:var(--disp);font-weight:900;font-size:1.15rem;letter-spacing:.3em;color:#eef8ff;margin:0;text-shadow:0 0 14px rgba(79,227,255,.35)}
-        .sec-line{flex:1;height:1px;background:linear-gradient(90deg,var(--line-hi),transparent)}
-        .sec-tag{font-family:var(--mono);font-size:.55rem;letter-spacing:.26em;color:var(--amber);border:1px solid rgba(255,180,84,.45);padding:3px 9px}
+        #IntroScreen { padding: 24px; max-width: 1000px; margin: 0 auto; animation: fadeIn 0.4s ease-out; position: relative; z-index: 1; }
+        .sec-h { display: flex; align-items: center; gap: 12px; margin: 48px 0 20px; }
+        .sec-idx { font-size: 1.4rem; font-weight: 600; color: var(--text-muted); }
+        .sec-h h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin: 0; }
+        .sec-line { flex: 1; height: 1px; background: var(--panel-border); }
+        .sec-tag { font-size: 0.7rem; font-weight: 500; color: var(--text-muted); padding: 3px 8px; background: var(--bg-alt); border-radius: 4px; }
 
-        .panel{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);position:relative;
-            clip-path:polygon(0 12px,12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%);
-            transition:border-color .25s, box-shadow .25s}
-        .panel:hover{border-color:var(--line-hi);box-shadow:0 0 24px rgba(79,227,255,.12)}
-        .panel-h{display:flex;align-items:center;gap:9px;padding:9px 14px;border-bottom:1px solid var(--line);
-            background:repeating-linear-gradient(-45deg, var(--cyan-soft) 0 5px, transparent 5px 11px)}
-        .panel-h .ic{color:var(--cyan);font-size:.65rem}
-        .panel-h h3{font-family:var(--disp);font-weight:700;font-size:.68rem;letter-spacing:.26em;color:var(--cyan);margin:0}
-        .panel-h .tag{margin-left:auto;font-family:var(--mono);font-size:.5rem;letter-spacing:.2em;color:var(--amber);border:1px solid rgba(255,180,84,.45);padding:2px 6px}
-        .panel-b{padding:16px}
-        .note{font-size:.72rem;color:var(--dim);line-height:1.6}
-        .note b{color:var(--txt)}
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+            transition: box-shadow 0.2s;
+        }
+        .panel:hover { box-shadow: var(--shadow-md); }
+        .panel-h {
+            display: flex; align-items: center; gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--panel-border);
+            background: var(--bg-alt);
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+        .panel-h h3 { font-size: 0.85rem; font-weight: 600; color: var(--text); margin: 0; }
+        .panel-h .tag { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); padding: 2px 8px; background: var(--bg-alt); border: 1px solid var(--panel-border); border-radius: 4px; }
+        .panel-b { padding: 20px; }
+        .note { font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; }
+        .note b { color: var(--text); }
 
         /* ===== SOUNDING ===== */
-        .sounding-grid{display:grid;grid-template-columns:1fr 1.1fr;gap:16px;align-items:start}
-        @media(max-width:900px){.sounding-grid{grid-template-columns:1fr}}
-        .field{margin-bottom:13px}
-        .field > label{display:block;font-family:var(--mono);font-size:.58rem;letter-spacing:.26em;color:var(--dim);margin-bottom:6px}
-        select, input[type="date"]{width:100%;appearance:none;-webkit-appearance:none;background:#08141d;border:1px solid var(--line);
-            color:var(--txt);font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;padding:9px 32px 9px 11px;cursor:pointer;transition:.2s;color-scheme:dark}
-        select:hover,select:focus,input[type="date"]:hover,input[type="date"]:focus{border-color:var(--cyan);box-shadow:0 0 12px rgba(79,227,255,.2);outline:none}
-        .selwrap{position:relative}
-        .selwrap::after{content:'▼';position:absolute;right:11px;top:50%;transform:translateY(-50%);color:var(--cyan);font-size:.55rem;pointer-events:none}
-        .preview-frame{position:relative;border:1px solid var(--line-hi);background:#04121c;padding:10px;
-            box-shadow:inset 0 0 60px rgba(0,0,0,.5), 0 0 30px rgba(79,227,255,.07)}
-        .preview-frame .corner{position:absolute;width:20px;height:20px;border:2px solid var(--cyan);z-index:2;opacity:.9}
-        .c-tl{top:6px;left:6px;border-right:0;border-bottom:0}.c-tr{top:6px;right:6px;border-left:0;border-bottom:0}
-        .c-bl{bottom:6px;left:6px;border-right:0;border-top:0}.c-br{bottom:6px;right:6px;border-left:0;border-top:0}
-        #soundingPreview{display:block;width:100%;height:auto;max-height:480px;object-fit:contain;background:#071119}
+        .sounding-grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 20px; align-items: start; }
+        @media(max-width: 900px) { .sounding-grid { grid-template-columns: 1fr; } }
+        .field { margin-bottom: 16px; }
+        .field > label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
+        select, input[type="date"] {
+            width: 100%;
+            appearance: none; -webkit-appearance: none;
+            background: var(--bg);
+            border: 1px solid var(--panel-border);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 0.85rem;
+            padding: 10px 32px 10px 12px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: border-color 0.2s;
+            color-scheme: light;
+        }
+        select:hover, select:focus, input[type="date"]:hover, input[type="date"]:focus {
+            border-color: var(--accent);
+            outline: none;
+        }
+        .selwrap { position: relative; }
+        .selwrap::after { content: '▼'; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.65rem; pointer-events: none; }
+        .preview-frame {
+            position: relative;
+            border: 1px solid var(--panel-border);
+            background: var(--bg-alt);
+            padding: 12px;
+            border-radius: var(--radius);
+        }
+        #soundingPreview { display: block; width: 100%; height: auto; max-height: 480px; object-fit: contain; background: var(--bg); border-radius: 4px; }
+        .sounding-status {
+            margin: 0; padding: 10px 12px;
+            font-size: 0.85rem; line-height: 1.5;
+            color: var(--text-muted);
+            border-top: 1px solid var(--panel-border);
+        }
+        .sounding-status.error { color: var(--error); }
+        .sounding-status[hidden] { display: none; }
 
         /* ===== LIVE PIPELINE ===== */
-        .stages{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-        .stage{flex:1;min-width:130px;border:1px solid var(--line);background:#08141d;padding:8px 11px;position:relative;transition:.25s}
-        .stage::after{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line);transition:.25s}
-        .stage .sn{font-family:var(--mono);font-size:.48rem;letter-spacing:.24em;color:var(--dim)}
-        .stage .ss{font-family:var(--disp);font-weight:700;font-size:.6rem;letter-spacing:.14em;color:var(--txt);margin-top:3px;transition:.25s}
-        .stage.active{border-color:var(--cyan)} .stage.active::after{background:var(--cyan);animation:blink .7s infinite}
-        .stage.ok::after{background:var(--green)} .stage.ok .ss{color:var(--green)}
-        .stage.fail{border-color:var(--red)} .stage.fail::after{background:var(--red)} .stage.fail .ss{color:var(--red)}
-        .pipe-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:14px}
-        @media(max-width:820px){.pipe-grid{grid-template-columns:1fr}}
-        #liveSounding{width:100%;height:290px;display:block;border:1px solid var(--line);background:#061019}
-        .pstats{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-content:start}
-        .pstat{border:1px solid var(--line);background:#08141d;padding:8px 10px}
-        .pstat b{display:block;font-family:var(--mono);font-size:.92rem;color:var(--cyan);font-weight:400}
-        .pstat span{font-family:var(--mono);font-size:.48rem;letter-spacing:.2em;color:var(--dim)}
-        .pstat.src b{color:var(--green)} .pstat.src.synth b{color:var(--amber)}
-        .plog{margin-top:12px;border:1px solid var(--line);background:#050d14;padding:10px 12px;font-family:var(--mono);
-            font-size:.58rem;line-height:1.75;letter-spacing:.05em;height:118px;overflow:hidden}
-        .plog div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#7fb8c9}
-        .plog .ok{color:var(--green)} .plog .warn{color:var(--amber)} .plog .err{color:var(--red)}
-        .retry{margin-top:12px}
+        .stages { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+        .stage {
+            flex: 1; min-width: 130px;
+            border: 1px solid var(--panel-border);
+            background: var(--bg);
+            padding: 10px 14px;
+            position: relative;
+            border-radius: var(--radius);
+            transition: all 0.2s;
+        }
+        .stage::after {
+            content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+            background: var(--panel-border);
+            border-radius: var(--radius) 0 0 var(--radius);
+            transition: background 0.2s;
+        }
+        .stage .sn { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stage .ss { font-size: 0.8rem; font-weight: 500; color: var(--text); margin-top: 3px; transition: color 0.2s; }
+        .stage.active { border-color: var(--accent); }
+        .stage.active::after { background: var(--accent); }
+        .stage.ok::after { background: var(--success); }
+        .stage.ok .ss { color: var(--success); }
+        .stage.fail { border-color: var(--error); }
+        .stage.fail::after { background: var(--error); }
+        .stage.fail .ss { color: var(--error); }
+
+        .pipe-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+        @media(max-width: 820px) { .pipe-grid { grid-template-columns: 1fr; } }
+
+        #liveSounding { width: 100%; height: 290px; display: block; border: 1px solid var(--panel-border); background: var(--bg); border-radius: var(--radius); }
+        .pstats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+        .pstat { border: 1px solid var(--panel-border); background: var(--bg); padding: 10px 12px; border-radius: var(--radius); }
+        .pstat b { display: block; font-family: var(--font-mono); font-size: 1.1rem; color: var(--accent); font-weight: 500; }
+        .pstat span { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .pstat.src b { color: var(--success); }
+        .pstat.src.synth b { color: var(--warning); }
+
+        .plog {
+            margin-top: 14px;
+            border: 1px solid var(--panel-border);
+            background: var(--bg-alt);
+            padding: 12px 14px;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            line-height: 1.8;
+            height: 118px;
+            overflow: hidden;
+            border-radius: var(--radius);
+        }
+        .plog div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+        .plog .ok { color: var(--success); }
+        .plog .warn { color: var(--warning); }
+        .plog .err { color: var(--error); }
+
+        .retry { margin-top: 14px; }
 
         /* ===== RESOLUTION ===== */
-        .resolution-warning{margin:0 0 16px;max-width:none;padding:12px 16px;background:rgba(255,180,84,.07);
-            border:1px solid rgba(255,180,84,.4);border-left:3px solid var(--amber)}
-        .resolution-warning p{margin:0;font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;color:var(--amber)}
-        table{width:100%;border-collapse:collapse;margin:0}
-        table td{padding:14px 10px;border-bottom:1px solid rgba(79,227,255,.1);vertical-align:middle}
-        table td b{font-family:var(--disp);font-weight:700;font-size:.66rem;letter-spacing:.2em;color:var(--txt)}
-        #simWorldProperties{font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;color:var(--cyan) !important}
-        output{font-family:var(--mono);font-size:.72rem;color:var(--cyan);margin-left:10px}
-        #simResYWarning, #simHeightWarning{font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;color:var(--red) !important;animation:blink 1.2s infinite}
-        input[type="range"]{width:100%;max-width:800px;margin:10px 0;height:4px;-webkit-appearance:none;appearance:none;outline:none;cursor:pointer;
-            background:linear-gradient(90deg,var(--cyan) var(--fill,50%),#123346 var(--fill,50%))}
-        input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:#0a1b26;border:2px solid var(--cyan);
-            cursor:grab;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:0 0 9px rgba(79,227,255,.7)}
-        input[type="range"]::-moz-range-thumb{width:13px;height:13px;background:#0a1b26;border:2px solid var(--cyan);border-radius:0}
-        input[type="button"], .btn{font-family:var(--disp);font-weight:700;font-size:.7rem;letter-spacing:.24em;cursor:pointer;color:#03222e;
-            background:var(--cyan);border:1px solid var(--cyan);padding:13px 26px;transition:.18s;
-            clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
-            box-shadow:0 0 18px rgba(79,227,255,.4)}
-        input[type="button"]:hover, .btn:hover{background:#8ceeff;box-shadow:0 0 28px rgba(79,227,255,.75);transform:translateY(-2px)}
-        input[type="button"]:active, .btn:active{transform:scale(.97)}
-        .btn.ghost{background:#0a1e2b;color:var(--cyan);box-shadow:none}
-        .btn.ghost:hover{background:var(--cyan);color:#03222e}
-        .terrain-hint{display:block;margin-top:12px;font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;color:var(--dim)}
-        .terrain-hint b{color:var(--green)}
+        .resolution-warning {
+            margin: 0 0 16px;
+            padding: 12px 16px;
+            background: rgba(210,153,34,0.12);
+            border: 1px solid rgba(210,153,34,0.35);
+            border-left: 3px solid var(--warning);
+            border-radius: var(--radius);
+        }
+        .resolution-warning p {
+            margin: 0;
+            font-size: 0.8rem;
+            color: #e3b341;
+        }
 
-        .file-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-        .file-row label{font-family:var(--disp);font-weight:700;font-size:.66rem;letter-spacing:.22em;color:var(--txt)}
-        input[type="file"]{font-family:var(--mono);font-size:.66rem;color:var(--txt);background:#08141d;border:1px dashed var(--line-hi);padding:10px 14px;cursor:pointer;transition:.2s}
-        input[type="file"]:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(79,227,255,.25)}
-        input[type="file"]::file-selector-button{font-family:var(--disp);font-weight:700;font-size:.6rem;letter-spacing:.18em;color:var(--cyan);
-            background:#0a1e2b;border:1px solid var(--line-hi);padding:7px 14px;margin-right:12px;cursor:pointer;transition:.2s}
-        input[type="file"]::file-selector-button:hover{background:var(--cyan);color:#03222e}
+        table { width: 100%; border-collapse: collapse; margin: 0; }
+        table td { padding: 16px 12px; border-bottom: 1px solid var(--panel-border); vertical-align: middle; }
+        table td b { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+        #simWorldProperties { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent) !important; }
 
-        #help, .tips, .controls, .example-files{margin:0;padding:0;background:none;border-radius:0;box-shadow:none;animation:none}
-        #help ul, .controls ul{list-style:none;margin:0;padding:0}
-        #help li, .controls li{display:flex;gap:11px;align-items:flex-start;padding:9px 0;border-bottom:1px dashed #123346;font-size:.74rem;line-height:1.6;color:var(--txt)}
-        #help li:last-child, .controls li:last-child{border-bottom:0}
-        #help li::before, .controls li::before{content:'▸';color:var(--amber);font-family:var(--mono)}
-        #help li b, .controls li b{color:var(--cyan)}
-        .controls h3{font-family:var(--disp);font-weight:700;font-size:.7rem;letter-spacing:.28em;color:var(--amber);margin:18px 0 6px}
-        .controls table td{font-size:.74rem}
-        .controls table td:first-child{width:200px}
-        kbd{font-family:var(--mono);font-size:.62rem;color:var(--cyan);background:#0c2130;border:1px solid var(--line);
-            min-width:24px;height:24px;display:inline-grid;place-items:center;padding:0 6px;margin:1px;box-shadow:inset 0 -2px 0 #06131c}
-        .support{margin:0;padding:0;background:none;text-align:left}
-        .support h1{font-family:var(--disp);font-weight:900;font-size:1.1rem;letter-spacing:.24em;color:var(--green) !important;margin:0 0 10px;text-shadow:0 0 16px rgba(93,245,164,.5)}
-        .support a{color:var(--cyan) !important;text-decoration:none;border-bottom:1px solid var(--cyan)}
-        .support a:hover{color:#8ceeff !important;text-shadow:0 0 10px rgba(79,227,255,.6)}
-        .support .by{font-family:var(--mono);font-size:.66rem;letter-spacing:.2em;color:var(--dim)}
-        .html5note{font-family:var(--mono);font-size:.56rem;letter-spacing:.14em;color:#3f5c6b;margin-top:26px;border-top:1px dashed #123346;padding-top:14px}
+        output { font-family: var(--font-mono); font-size: 0.85rem; color: var(--accent); margin-left: 12px; }
+        #simResYWarning, #simHeightWarning {
+            font-family: var(--font);
+            font-size: 0.75rem;
+            color: var(--error) !important;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            max-width: 800px;
+            margin: 10px 0;
+            height: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            outline: none;
+            cursor: pointer;
+            background: linear-gradient(90deg, var(--accent) var(--fill, 50%), var(--panel-border) var(--fill, 50%));
+            border-radius: 2px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px; height: 18px;
+            background: var(--bg);
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            background: var(--accent);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 18px; height: 18px;
+            background: var(--bg);
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+        }
+
+        input[type="button"], .btn {
+            font-family: var(--font);
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            color: var(--bg);
+            background: var(--accent);
+            border: none;
+            padding: 12px 24px;
+            border-radius: var(--radius);
+            transition: all 0.2s;
+        }
+        input[type="button"]:hover, .btn:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input[type="button"]:active, .btn:active {
+            transform: translateY(0);
+        }
+        .btn.ghost {
+            background: var(--bg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+        }
+        .btn.ghost:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .terrain-hint {
+            display: block;
+            margin-top: 12px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .terrain-hint b { color: var(--success); }
+
+        .file-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .file-row label { font-weight: 600; font-size: 0.85rem; color: var(--text); }
+        input[type="file"] {
+            font-family: var(--font);
+            font-size: 0.8rem;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px dashed var(--panel-border);
+            padding: 10px 14px;
+            cursor: pointer;
+            border-radius: var(--radius);
+            transition: border-color 0.2s;
+        }
+        input[type="file"]:hover { border-color: var(--accent); }
+        input[type="file"]::file-selector-button {
+            font-family: var(--font);
+            font-weight: 500;
+            font-size: 0.8rem;
+            color: var(--accent);
+            background: var(--bg);
+            border: 1px solid var(--accent);
+            padding: 6px 14px;
+            margin-right: 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        #help, .tips, .controls, .example-files { margin: 0; padding: 0; background: none; }
+        #help ul, .controls ul { list-style: none; margin: 0; padding: 0; }
+        #help li, .controls li {
+            display: flex; gap: 12px; align-items: flex-start;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--panel-border);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text);
+        }
+        #help li:last-child, .controls li:last-child { border-bottom: none; }
+        #help li::before, .controls li::before { content: '•'; color: var(--accent); font-weight: bold; }
+        #help li b, .controls li b { color: var(--accent); }
+
+        .controls h3 { font-size: 0.9rem; font-weight: 600; color: var(--text); margin: 20px 0 8px; }
+        .controls table td { font-size: 0.85rem; }
+        .controls table td:first-child { width: 220px; }
+
+        kbd {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text);
+            background: var(--bg-alt);
+            border: 1px solid var(--panel-border);
+            min-width: 26px;
+            height: 26px;
+            display: inline-grid;
+            place-items: center;
+            padding: 0 8px;
+            margin: 1px;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .support { margin: 0; padding: 0; background: none; text-align: left; }
+        .support h1 { font-size: 1.1rem; font-weight: 600; color: var(--text) !important; margin: 0 0 12px; }
+        .support a { color: var(--accent) !important; text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.2s; }
+        .support a:hover { border-bottom-color: var(--accent); }
+        .support .by { font-size: 0.8rem; color: var(--text-muted); }
+
+        .html5note {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 32px;
+            border-top: 1px solid var(--panel-border);
+            padding-top: 16px;
+        }
 
         /* ===== CANVASES (preserved) ===== */
-        #mainCanvas{position:fixed;top:0;left:0;z-index:0;display:none}
-        #graphCanvas{position:fixed;z-index:1;display:none}
+        #mainCanvas { position: fixed; top: 0; left: 0; z-index: 0; display: none; }
+        #graphCanvas { position: fixed; z-index: 1; display: none; }
 
-        /* ===== IN-GAME UI (preserved classes, sci-fi skin) ===== */
-        .autopilotNumberInput{background:#0a1e2b;border:2px solid var(--cyan);color:var(--cyan);font-family:var(--mono);padding:4px 6px;box-shadow:0 0 10px rgba(79,227,255,.3)}
-        .airbus-switch{display:none}
-        .airbus-label{position:relative;width:50px;height:50px;background:linear-gradient(180deg,#0e2331,#08141d);
-            border:2px solid var(--line-hi);border-radius:6px;box-shadow:inset 0 0 10px #000, 0 0 8px rgba(79,227,255,.15);
-            color:#cfe9f2;font-family:var(--mono);font-size:11px;font-weight:bold;letter-spacing:1px;
-            display:flex;justify-content:center;align-items:center;align-items:flex-end;cursor:pointer;padding-bottom:5px;transition:.2s}
-        .airbus-label:hover{border-color:var(--cyan)}
-        .airbus-label::before{content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);width:60%;height:10px;
-            background:#0a2a1a;border:1px solid #0f3a26;border-radius:2px;transition:.2s}
-        .airbus-switch:checked + .airbus-label::before{background:var(--green);box-shadow:0 0 10px var(--green)}
-        .gauge{position:absolute;left:300px;height:calc(var(--size)/2)}
-        svg{display:block;overflow:visible}
-        .bg-arc{stroke:#1b3a4d;stroke-width:24;fill:none;stroke-linecap:round}
-        .fill-arc{stroke:var(--green);stroke-width:24;fill:none;stroke-linecap:round;transition:stroke .4s linear;filter:drop-shadow(0 0 6px rgba(93,245,164,.6))}
-        .value{font-size:56px;font-weight:700;fill:#eaf7ff;text-anchor:middle;font-family:var(--mono)}
-        /* ===== LOADING SCREEN (reworked) ===== */
-        .ls-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;
+        /* ===== IN-GAME UI (preserved classes, clean skin) ===== */
+        .autopilotNumberInput {
+            background: rgba(13,17,23,0.85);
+            border: 2px solid var(--accent);
+            color: var(--text);
+            font-family: var(--font-mono);
+            padding: 4px 6px;
+            border-radius: var(--radius);
+        }
+        .airbus-switch { display: none; }
+        .airbus-label {
+            position: relative;
+            width: 50px; height: 50px;
+            background: rgba(13,17,23,0.85);
+            border: 2px solid var(--panel-border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            align-items: flex-end;
+            cursor: pointer;
+            padding-bottom: 5px;
+            transition: border-color 0.2s;
+        }
+        .airbus-label:hover { border-color: var(--accent); }
+        .airbus-label::before {
+            content: "";
+            position: absolute;
+            top: 8px; left: 50%;
+            transform: translateX(-50%);
+            width: 60%; height: 10px;
+            background: var(--bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 2px;
+            transition: background 0.2s;
+        }
+        .airbus-switch:checked + .airbus-label::before {
+            background: var(--success);
+            border-color: var(--success);
+        }
+        .gauge { position: absolute; left: 300px; height: calc(var(--size)/2); }
+        svg { display: block; overflow: visible; }
+        .bg-arc { stroke: var(--panel-border); stroke-width: 24; fill: none; stroke-linecap: round; }
+        .fill-arc { stroke: var(--success); stroke-width: 24; fill: none; stroke-linecap: round; transition: stroke 0.4s linear; }
+        .value { font-size: 56px; font-weight: 700; fill: var(--text); text-anchor: middle; font-family: var(--font-mono); }
+        /* ===== LOADING SCREEN ===== */
+        /* A single, simple rainbow progress bar centred on the storm background photo.
+           The bar itself is the full rainbow; a dark mask (the fill) shrinks from the right
+           so the colours sweep in left to right as loading progresses. No box, LED, percent
+           or step text — just the bar. The overlay is opaque so it fully covers the UI behind. */
+        .ls-overlay {
+            position: fixed; inset: 0; z-index: 90;
+            display: flex; align-items: center; justify-content: center;
             background:
-                radial-gradient(1000px 560px at 50% 28%, rgba(24,74,108,.28), transparent 65%),
-                repeating-linear-gradient(0deg, rgba(79,227,255,.02) 0 1px, transparent 1px 42px),
-                repeating-linear-gradient(90deg, rgba(79,227,255,.02) 0 1px, transparent 1px 42px),
-                #030a10;
-            opacity:1;transition:opacity .45s ease}
-        .ls-overlay.ls-done{opacity:0;pointer-events:none}
-        .ls-box{width:min(560px,88vw);position:relative;padding:26px 30px 24px;
-            background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
-            clip-path:polygon(0 14px,14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%);
-            box-shadow:0 0 60px rgba(79,227,255,.08), inset 0 0 40px rgba(0,0,0,.4);
-            animation:fadeIn .5s ease-in-out}
-        .ls-head{display:flex;align-items:center;gap:14px;margin-bottom:20px}
-        .ls-titles{min-width:0}
-        .ls-glyph{width:34px;height:34px;position:relative;flex:0 0 auto}
-        .ls-glyph::before,.ls-glyph::after{content:'';position:absolute;inset:0;border:2px solid var(--cyan);
-            clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);animation:spin 9s linear infinite}
-        .ls-glyph::after{inset:8px;border-color:var(--amber);animation-direction:reverse;animation-duration:6s}
-        .ls-title{font-family:var(--disp);font-weight:900;font-size:1.05rem;letter-spacing:.18em;color:#eef8ff;
-            text-shadow:0 0 14px rgba(79,227,255,.4);white-space:nowrap}
-        .ls-sub{font-family:var(--mono);font-size:.55rem;letter-spacing:.34em;color:var(--amber);margin-top:4px;white-space:nowrap}
-        .ls-led{margin-left:auto;width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--green);
-            box-shadow:0 0 10px var(--green);animation:blink 1.4s infinite}
-        .ls-status{font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;color:var(--txt);
-            min-height:1.4em;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .ls-track{height:12px;background:#050d14;border:1px solid var(--line);position:relative;overflow:hidden}
-        .ls-fill{height:100%;width:0%;background:linear-gradient(90deg,#0f6f8f,var(--cyan));
-            box-shadow:0 0 14px rgba(79,227,255,.75);transition:width .3s ease}
-        .ls-track::after{content:'';position:absolute;top:0;bottom:0;left:0;width:38%;
-            background:linear-gradient(90deg,transparent,rgba(238,248,255,.16),transparent);
-            transform:translateX(-120%);animation:lsScan 1.6s linear infinite}
-        @keyframes lsScan{to{transform:translateX(340%)}}
-        .ls-meta{display:flex;justify-content:space-between;margin-top:10px}
-        .ls-percent{font-family:var(--disp);font-weight:700;font-size:1.35rem;color:var(--cyan);
-            text-shadow:0 0 12px rgba(79,227,255,.55)}
-        .ls-step{font-family:var(--mono);font-size:.58rem;letter-spacing:.26em;color:var(--dim);align-self:flex-end}
-        .ls-overlay.ls-error .ls-fill{background:linear-gradient(90deg,#8f1f30,var(--red));box-shadow:0 0 14px rgba(255,84,112,.7)}
-        .ls-overlay.ls-error .ls-status{color:var(--red)}
-        .ls-overlay.ls-error .ls-percent{color:var(--red);text-shadow:0 0 12px rgba(255,84,112,.55)}
-        .ls-overlay.ls-error .ls-led{background:var(--red);box-shadow:0 0 10px var(--red)}
+                radial-gradient(130% 100% at 50% 42%, rgba(4, 6, 12, 0.12) 0%, rgba(4, 6, 12, 0.66) 100%),
+                url('resources/img/loading-bg.jpg') center / cover no-repeat #05070d;
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+        .ls-overlay.ls-done { opacity: 0; pointer-events: none; }
+        .ls-track {
+            position: relative;
+            width: min(520px, 74vw);
+            height: 13px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: linear-gradient(90deg, #ff2d55, #ff8a00, #ffd60a, #2ee06a, #18c7ff, #5b6cff, #b13cff);
+            box-shadow: 0 8px 34px rgba(0,0,0,0.6), 0 0 24px rgba(80, 120, 255, 0.35), inset 0 0 0 1px rgba(255,255,255,0.16);
+        }
+        .ls-fill {
+            position: absolute; top: 0; right: 0; height: 100%; width: 100%;
+            background: rgba(5, 8, 14, 0.84);
+            border-radius: 999px;
+            transition: width 0.28s ease;
+        }
+
+        .ls-overlay.ls-error .ls-track { background: #e11d2e; box-shadow: 0 2px 16px rgba(225,29,46,0.5); }
+        .ls-overlay.ls-error .ls-fill { background: rgba(5, 8, 14, 0.55); }
     </style>
 </head>
 
@@ -265,14 +502,12 @@
 
     <nav class="main-nav">
         <div class="nav-title">
-            <div class="glyph"></div>
-            <h1>2D WEATHER SANDBOX <small>REMAKE // ATMOS-KERNEL v2.6</small></h1>
+            <h1>2D Weather Sandbox <small>Atmospheric Simulation</small></h1>
         </div>
         <div class="nav-icons">
-            <span class="led"><i></i>GPU NOMINAL</span>
-            <span class="led c"><i></i>SOUNDING LINK</span>
-            <span id="navClock">--:--:--Z</span>
-            <button class="sfx-btn" id="sfxToggle" type="button">SFX ON</button>
+            <span id="navClock">--:--:--</span>
+            <button class="sfx-btn" id="sfxToggle" type="button">SFX On</button>
+            <button class="sfx-btn" id="fsToggle" type="button" title="Toggle fullscreen">⛶ Fullscreen</button>
         </div>
     </nav>
 
@@ -282,10 +517,10 @@
 
         <!-- ═══ 01 SOUNDING FORCING ═══ -->
         <div class="sec-h">
-            <span class="sec-idx">01</span><h2>SOUNDING FORCING</h2><span class="sec-line"></span><span class="sec-tag">PRE-FLIGHT</span>
+            <span class="sec-idx">1</span><h2>Sounding Forcing</h2><span class="sec-line"></span><span class="sec-tag">Pre-flight</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>ATMOSPHERIC SOUNDING</h3><span class="tag">REAL-WORLD DATA</span></header>
+            <header class="panel-h"><h3>Atmospheric Sounding</h3><span class="tag">Real-world data</span></header>
             <div class="panel-b sounding-grid">
                 <div>
                     <div class="field">
@@ -314,58 +549,57 @@
                     <p class="note">Select a <b>real world sounding</b> to use as forcing in the simulation.</p>
                 </div>
                 <div class="preview-frame">
-                    <span class="corner c-tl"></span><span class="corner c-tr"></span>
-                    <span class="corner c-bl"></span><span class="corner c-br"></span>
-                    <img id="soundingPreview" alt="sounding arent available. pls select a different one">
+                    <img id="soundingPreview" alt="Sounding chart">
+                    <p id="soundingStatus" class="sounding-status" hidden></p>
                 </div>
             </div>
         </section>
 
         <!-- ═══ 02 LIVE SOUNDING PIPELINE ═══ -->
         <div class="sec-h">
-            <span class="sec-idx">02</span><h2>LIVE SOUNDING PIPELINE</h2><span class="sec-line"></span><span class="sec-tag">RAOB UPLINK</span>
+            <span class="sec-idx">2</span><h2>Live Sounding Pipeline</h2><span class="sec-line"></span><span class="sec-tag">Live data</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>VERTICAL PROFILE ACQUISITION</h3><span class="tag" id="pipeSrc">STANDBY</span></header>
+            <header class="panel-h"><h3>Vertical Profile Acquisition</h3><span class="tag" id="pipeSrc">Standby</span></header>
             <div class="panel-b">
                 <div class="stages">
-                    <div class="stage" data-stage="station"><div class="sn">STAGE 01</div><div class="ss">STATION</div></div>
-                    <div class="stage" data-stage="uplink"><div class="sn">STAGE 02</div><div class="ss">UPLINK</div></div>
-                    <div class="stage" data-stage="parse"><div class="sn">STAGE 03</div><div class="ss">PARSE</div></div>
-                    <div class="stage" data-stage="profile"><div class="sn">STAGE 04</div><div class="ss">PROFILE</div></div>
+                    <div class="stage" data-stage="station"><div class="sn">Stage 1</div><div class="ss">Station</div></div>
+                    <div class="stage" data-stage="uplink"><div class="sn">Stage 2</div><div class="ss">Uplink</div></div>
+                    <div class="stage" data-stage="parse"><div class="sn">Stage 3</div><div class="ss">Parse</div></div>
+                    <div class="stage" data-stage="profile"><div class="sn">Stage 4</div><div class="ss">Profile</div></div>
                 </div>
                 <div class="pipe-grid">
                     <canvas id="liveSounding"></canvas>
                     <div class="pstats">
-                        <div class="pstat src" id="psSrcWrap"><b id="psSrc">—</b><span>SOURCE</span></div>
-                        <div class="pstat"><b id="psSt">—</b><span>STATION</span></div>
-                        <div class="pstat"><b id="psTime">—</b><span>VALID TIME</span></div>
-                        <div class="pstat"><b id="psN">—</b><span>LEVELS</span></div>
-                        <div class="pstat"><b id="psT">—</b><span>SFC TEMP</span></div>
-                        <div class="pstat"><b id="psTd">—</b><span>SFC DEWPOINT</span></div>
-                        <div class="pstat"><b id="psW">—</b><span>MAX WIND</span></div>
-                        <div class="pstat"><b id="psTro">—</b><span>TROPOPAUSE</span></div>
+                        <div class="pstat src" id="psSrcWrap"><b id="psSrc">—</b><span>Source</span></div>
+                        <div class="pstat"><b id="psSt">—</b><span>Station</span></div>
+                        <div class="pstat"><b id="psTime">—</b><span>Valid Time</span></div>
+                        <div class="pstat"><b id="psN">—</b><span>Levels</span></div>
+                        <div class="pstat"><b id="psT">—</b><span>Sfc Temp</span></div>
+                        <div class="pstat"><b id="psTd">—</b><span>Sfc Dewpoint</span></div>
+                        <div class="pstat"><b id="psW">—</b><span>Max Wind</span></div>
+                        <div class="pstat"><b id="psTro">—</b><span>Tropopause</span></div>
                     </div>
                 </div>
                 <div class="plog" id="pipeLog"></div>
-                <button class="btn ghost retry" id="pipeRetry" type="button">↻ RETRY UPLINK</button>
+                <button class="btn ghost retry" id="pipeRetry" type="button">Retry</button>
             </div>
         </section>
 
         <!-- ═══ 03 GRID RESOLUTION ═══ -->
         <div class="sec-h">
-            <span class="sec-idx">03</span><h2>GRID RESOLUTION</h2><span class="sec-line"></span><span class="sec-tag">GPU CRITICAL</span>
+            <span class="sec-idx">3</span><h2>Grid Resolution</h2><span class="sec-line"></span><span class="sec-tag">GPU Critical</span>
         </div>
         <section class="panel">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>SIMULATION GRID</h3><span class="tag">PERFORMANCE</span></header>
+            <header class="panel-h"><h3>Simulation Grid</h3><span class="tag">Performance</span></header>
             <div class="panel-b">
                 <form id="startBtn" oninput="updateSetupSliders();">
                     <div class="resolution-warning">
-                        <p>⚠ CHOOSE THE RESOLUTION — HIGHER RESOLUTIONS PROVIDE MORE DETAIL BUT SIGNIFICANTLY IMPACT PERFORMANCE FROM GPU LOAD</p>
+                        <p>⚠ Choose the resolution — higher resolutions provide more detail but significantly impact performance from GPU load.</p>
                     </div>
                     <table>
                         <tr>
-                            <td><b>HORIZONTAL RESOLUTION</b></td>
+                            <td><b>Horizontal Resolution</b></td>
                             <td style="width: 30%">
                                 <input type="range" min="100" max="16000" value="3000" step="100" id="simResSelX" />
                                 <output id="simResShowX"></output>
@@ -373,7 +607,7 @@
                             <td id="simWorldProperties" style="width: 50%">Cellheight: 40m &nbsp;·&nbsp; Sim width: 40 km</td>
                         </tr>
                         <tr>
-                            <td><b>VERTICAL RESOLUTION</b></td>
+                            <td><b>Vertical Resolution</b></td>
                             <td>
                                 <input type="range" min="100" max="500" value="300" step="10" id="simResSelY" />
                                 <output id="simResShowY"></output>
@@ -381,7 +615,7 @@
                             <td><i id="simResYWarning" style="display: none;">⚠ Vertical resolutions other than 300 are not very realistic and can be laggy.</i></td>
                         </tr>
                         <tr>
-                            <td><b>SIMULATION HEIGHT</b></td>
+                            <td><b>Simulation Height</b></td>
                             <td>
                                 <input type="range" min="5000" max="15000" value="12000" step="100" id="simHeightSel" />
                                 <output id="simHeightShow"></output>
@@ -389,11 +623,11 @@
                             <td><i id="simHeightWarning" style="display: none;">⚠ my granny got hit by a bazooka</i></td>
                         </tr>
                     </table>
-                    <input type="button" value="▶ CREATE NEW SIMULATION" onclick="loadData ()" />
-                    <i class="terrain-hint">◈ Move the mouse until you see a <b>terrain you like</b>, then just release the mouse or finger to start.</i>
+                    <input type="button" value="▶ Start Simulation" onclick="loadData ()" />
+                    <i class="terrain-hint">Move the mouse until you see a <b>terrain you like</b>, then just release the mouse or finger to start.</i>
                 </form>
                 <p style="margin-top: 34px;" class="file-row">
-                    <label for="fileInput">LOAD SAVE FILE:</label>
+                    <label for="fileInput">Load save file:</label>
                     <input type="file" id="fileInput" name="fileInput" accept=".weathersandbox " onchange="loadData()" />
                 </p>
             </div>
@@ -401,10 +635,10 @@
 
         <!-- ═══ 04 BRIEFING ═══ -->
         <div class="sec-h lazy">
-            <span class="sec-idx">04</span><h2>BRIEFING</h2><span class="sec-line"></span><span class="sec-tag">USEFUL TIPS</span>
+            <span class="sec-idx">4</span><h2>Briefing</h2><span class="sec-line"></span><span class="sec-tag">Useful Tips</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>USEFUL TIPS</h3><span class="tag">OPS</span></header>
+            <header class="panel-h"><h3>Useful Tips</h3><span class="tag">Ops</span></header>
             <div class="panel-b" id="help">
                 <ul>
                     <li>Performance is mostly <b>GPU</b> — Adreno 610, Adreno 613, Adreno 619, Mali G57 MCX, Mali G68 MCX/MPX, Mali G610 MCX/MPX, Mali G615 MCX/MPX, Mali G720 MCX/MPX, Adreno 620, Adreno 710, Adreno 720, Adreno 722, Adreno 810 or better recommended for realtime gameplay. Phones, smartwatches, smart TV, PC, laptop and more are supported. <b>(needs a browser)</b></li>
@@ -415,18 +649,18 @@
 
         <!-- ═══ 05 CONTROLS ═══ -->
         <div class="sec-h lazy">
-            <span class="sec-idx">05</span><h2>CONTROLS</h2><span class="sec-line"></span><span class="sec-tag">INPUT MAP</span>
+            <span class="sec-idx">5</span><h2>Controls</h2><span class="sec-line"></span><span class="sec-tag">Input Map</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>CONTROL SURFACE</h3><span class="tag">MOUSE + KEYS</span></header>
+            <header class="panel-h"><h3>Control Surface</h3><span class="tag">Mouse + Keys</span></header>
             <div class="panel-b controls">
-                <h3>◢ MOUSE</h3>
+                <h3>Mouse</h3>
                 <ul>
                     <li><b>Middle mouse button</b> to drag the simulation area around.</li>
                     <li><b>Mouse wheel</b> to zoom in and out — or to change brush size while holding down <b>B</b>.</li>
                     <li><b>Left mouse button</b> to use selected tool. Hold down <b>Ctrl</b> (command on mac) to perform the inverted action.</li>
                 </ul>
-                <h3>◢ KEYS</h3>
+                <h3>Keys</h3>
                 <table style="width: 100%">
                     <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Display Modes</td></tr>
                     <tr><td><kbd>K</kbd></td><td>Air Quality Display</td></tr>
@@ -466,22 +700,22 @@
 
         <!-- ═══ 06 SUPPORT ═══ -->
         <div class="sec-h lazy">
-            <span class="sec-idx">06</span><h2>SUPPORT</h2><span class="sec-line"></span><span class="sec-tag">UPLINK</span>
+            <span class="sec-idx">6</span><h2>Support</h2><span class="sec-line"></span><span class="sec-tag">Get in touch</span>
         </div>
         <section class="panel lazy">
-            <header class="panel-h"><span class="ic">◢◤</span><h3>SUPPORT CHANNEL</h3><span class="tag">TIKTOK</span></header>
+            <header class="panel-h"><h3>Support channel</h3><span class="tag">TikTok</span></header>
             <div class="panel-b support">
-                <h1>◢ SUPPORT ME ON TIKTOK</h1>
-                pls support me to get popular on TikTok —
+                <h1>Support Me on TikTok</h1>
+                Please support me to get popular on TikTok —
                 <a href="https://vt.tiktok.com/ZSQTSW8J1/" target="_blank" rel="noopener noreferrer">supporting me on TikTok</a>
                 <br />
-                considered playing my refreshed version of 2d weather sandbox
+                Consider playing my refreshed version of 2D Weather Sandbox
                 <br /><br />
-                <span class="by">BY ₱@₹@D0X</span>
+                <span class="by">By ₱@₹@D0X</span>
             </div>
         </section>
 
-        <div class="html5note">SYS NOTICE // ur browser does not support HTML5, u must be using a really old browser.</div>
+        <div class="html5note">Note: Your browser does not support HTML5. Please use a modern browser.</div>
     </div>
 
     <canvas id="graphCanvas"></canvas>
@@ -563,7 +797,7 @@
         el.classList.remove('active', 'ok', 'fail');
         if (state) el.classList.add(state);
         el.querySelector('.ss').textContent =
-            state === 'active' ? 'LINKING' : state === 'ok' ? 'OK' : state === 'fail' ? 'FAIL' : name.toUpperCase();
+            state === 'active' ? 'Linking…' : state === 'ok' ? 'Done' : state === 'fail' ? 'Failed' : name.charAt(0).toUpperCase() + name.slice(1);
     }
     function resetStages() { ['station','uplink','parse','profile'].forEach(s => setStage(s, null)); }
 
@@ -576,8 +810,8 @@
     function resolveStation() {
         const sel = $id('stationSelect');
         if (!sel || !sel.value) return null;
-        const v = sel.value.trim().toUpperCase();
-        const txt = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent || v).toUpperCase();
+        const v = sel.value.trim();
+        const txt = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent || v);
         if (/^[A-Z]{4}$/.test(v)) return { icao: v, label: txt.replace(v, '').replace(/^[·\s]+/, '') || v };
         const m = CATALOG.find(c => txt.includes(c[1].split(' ')[0]) || v.includes(c[0]));
         if (m) return { icao: m[0], label: m[1] };
@@ -633,25 +867,25 @@
         const pTop = 100, pBot = 1050, LR = Math.log(pBot / pTop);
         const yFor = p => mT + (Math.log(pBot / p) / LR) * ph;
         const xFor = (t, p) => mL + ((t + 80) / 120) * pw * 0.72 + (1 - (yFor(p) - mT) / ph) * pw * 0.28;
-        c.font = '9px "Share Tech Mono", monospace'; c.textBaseline = 'middle';
+        c.font = '9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'; c.textBaseline = 'middle';
         [1000,850,700,500,400,300,250,200,150,100].forEach(p => {
             const y = yFor(p);
-            c.strokeStyle = 'rgba(79,227,255,.10)'; c.beginPath(); c.moveTo(mL, y); c.lineTo(w - mR, y); c.stroke();
-            c.fillStyle = 'rgba(94,127,144,.9)'; c.fillText(p, 6, y);
+            c.strokeStyle = 'rgba(48,54,61,.9)'; c.beginPath(); c.moveTo(mL, y); c.lineTo(w - mR, y); c.stroke();
+            c.fillStyle = '#8b949e'; c.fillText(p, 6, y);
         });
         for (let t = -80; t <= 40; t += 20) {
-            c.strokeStyle = t === 0 ? 'rgba(79,227,255,.22)' : 'rgba(79,227,255,.07)';
+            c.strokeStyle = t === 0 ? 'rgba(88,166,255,.4)' : 'rgba(48,54,61,.9)';
             c.beginPath(); c.moveTo(xFor(t, pBot), yFor(pBot)); c.lineTo(xFor(t, pTop), yFor(pTop)); c.stroke();
         }
-        const path = (key, col, glow) => {
-            c.strokeStyle = col; c.lineWidth = 2.2; c.shadowColor = glow; c.shadowBlur = 8; c.beginPath();
+        const path = (key, col) => {
+            c.strokeStyle = col; c.lineWidth = 1.8; c.beginPath();
             prof.forEach((l, i) => { const x = xFor(l[key], l.p), y = yFor(l.p); i ? c.lineTo(x, y) : c.moveTo(x, y); });
-            c.stroke(); c.shadowBlur = 0;
+            c.stroke();
         };
-        path('td', '#4fe3ff', 'rgba(79,227,255,.7)');
-        path('t', '#ffb454', 'rgba(255,180,84,.7)');
-        c.fillStyle = 'rgba(255,180,84,.9)'; c.fillText('TEMP', w - mR - 34, mT + 8);
-        c.fillStyle = 'rgba(79,227,255,.9)'; c.fillText('DWPT', w - mR - 34, mT + 20);
+        path('td', '#58a6ff'); // dewpoint: page accent
+        path('t', '#c05621');  // temperature: warm contrast
+        c.fillStyle = '#c05621'; c.fillText('Temp', w - mR - 30, mT + 8);
+        c.fillStyle = '#58a6ff'; c.fillText('Dewpt', w - mR - 34, mT + 20);
     }
 
     function computeStats(prof) {
@@ -664,7 +898,7 @@
     function fillStats(s, source, st, date, hour) {
         $id('psSrc').textContent = source;
         $id('psSrcWrap').classList.toggle('synth', source !== 'LIVE');
-        $id('pipeSrc').textContent = source === 'LIVE' ? 'RAOB LIVE' : 'SYNTH FALLBACK';
+        $id('pipeSrc').textContent = source === 'LIVE' ? 'Live data' : 'Synthetic fallback';
         $id('psSt').textContent = st.icao;
         $id('psTime').textContent = date + ' ' + String(hour).padStart(2, '0') + 'Z';
         $id('psN').textContent = s.n;
@@ -679,32 +913,32 @@
         pipeBusy = true;
         resetStages();
         ensureStations();
-        setStage('station', 'active'); log('RESOLVING STATION...');
+        setStage('station', 'active'); log('Resolving station…');
         const st = resolveStation();
-        if (!st) { setStage('station', 'fail'); log('NO STATION SELECTED', 'err'); pipeBusy = false; return; }
-        setStage('station', 'ok'); log('STATION ' + st.icao + ' · ' + st.label, 'ok');
+        if (!st) { setStage('station', 'fail'); log('No station selected', 'err'); pipeBusy = false; return; }
+        setStage('station', 'ok'); log('Station ' + st.icao + ' · ' + st.label, 'ok');
         const date = $id('datePicker').value || '2025-06-15';
         const hour = +($id('hourSelector').value || 12);
-        setStage('uplink', 'active'); log('UPLINK mesonet.agron.iastate.edu ...');
+        setStage('uplink', 'active'); log('Contacting mesonet.agron.iastate.edu…');
         let prof, source = 'LIVE';
         try {
             prof = await fetchLive(st.icao, date, hour);
-            setStage('uplink', 'ok'); log('UPLINK OK · ' + prof.length + ' LEVELS RECEIVED', 'ok');
+            setStage('uplink', 'ok'); log('Uplink ok · ' + prof.length + ' levels received', 'ok');
             if (userTriggered) SFX.ok();
         } catch (err) {
             source = 'SYNTH'; setStage('uplink', 'fail');
-            log('UPLINK FAILED (' + (err.message || 'TIMEOUT') + ') → SYNTH FALLBACK', 'warn');
+            log('Uplink failed (' + (err.message || 'timeout') + ') → using the synthetic profile', 'warn');
             prof = synthProfile(st.icao + date + hour, hour);
             if (userTriggered) SFX.error();
         }
         if (document.body.classList.contains('sim-active')) { pipeBusy = false; return; }
         setStage('parse', 'active'); await wait(140);
-        setStage('parse', 'ok'); log('PARSE COMPLETE · ' + prof.length + ' VALID LEVELS', 'ok');
+        setStage('parse', 'ok'); log('Parse complete · ' + prof.length + ' valid levels', 'ok');
         setStage('profile', 'active'); await wait(90);
         lastProf = prof;
         renderSkewT(prof);
         fillStats(computeStats(prof), source, st, date, hour);
-        setStage('profile', 'ok'); log('PROFILE RENDERED · SOURCE ' + source, source === 'LIVE' ? 'ok' : 'warn');
+        setStage('profile', 'ok'); log('Profile rendered · source: ' + (source === 'LIVE' ? 'live' : 'synthetic'), source === 'LIVE' ? 'ok' : 'warn');
         pipeBusy = false;
     }
 
@@ -750,6 +984,30 @@
         const paint = () => r.style.setProperty('--fill', ((r.value - r.min) / (r.max - r.min) * 100) + '%');
         r.addEventListener('input', paint); paint();
     });
+
+    /* ═══════════ Fullscreen mode (on by default) ═══════════
+       The Fullscreen API needs a user gesture, so we enter on the first interaction
+       (click/keydown) by default. The button lets the user toggle it afterwards. */
+    (() => {
+      const btn = $id('fsToggle');
+      if (!btn) return;
+      const isFS = () => !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+      const target = () => document.getElementById('mainCanvas') || document.documentElement;
+      const enter = () => { const el = target(); const f = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen; if (f) f.call(el); };
+      const exit = () => { const f = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen; if (f) f.call(document); };
+      function update() {
+        const on = isFS();
+        btn.textContent = on ? '⛶ Exit Fullscreen' : '⛶ Fullscreen';
+        btn.classList.toggle('off', !on);
+      }
+      btn.addEventListener('click', (e) => { e.stopPropagation(); isFS() ? exit() : enter(); });
+      // auto-on by default: enter fullscreen on the first user gesture
+      const autoEnter = () => { if (!isFS()) { enter(); window.removeEventListener('pointerdown', autoEnter); window.removeEventListener('keydown', autoEnter); } };
+      window.addEventListener('pointerdown', autoEnter);
+      window.addEventListener('keydown', autoEnter);
+      ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(ev => document.addEventListener(ev, update));
+      update();
+    })();
     </script>
 </body>
     </html>

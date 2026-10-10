@@ -70,76 +70,149 @@ function mixGeneric(a, b, t, {clamp = false} = {})
 
 const corsUrl = 'https://my-cors-proxy.nielsdaemen747.workers.dev/?url='; // my own proxy worker on cloudfare
 
+// The sounding pages are scraped through a CORS proxy. A single proxy is a single point of
+// failure: when the worker is unreachable the fetch fails, the HTML that comes back (if any)
+// is an error page with no images in it, and the old code then crashed on
+// `img.getAttribute('src')` and left the preview pointing at a broken image. Try the next
+// proxy in the list instead, and only give up when every one of them has failed.
+const corsProxies = [
+  url => corsUrl + encodeURIComponent(url),
+  url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+  url => 'https://corsproxy.io/?url=' + encodeURIComponent(url),
+];
+
+async function fetchThroughCorsProxy(url)
+{
+  let lastError = null;
+
+  for (const buildProxyUrl of corsProxies) {
+    try {
+      const response = await fetch(buildProxyUrl(url));
+
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+
+      const text = await response.text();
+      if (!text || !text.trim().length) throw new Error('empty response');
+
+      return text;
+    } catch (error) {
+      lastError = error;
+      console.warn('Sounding proxy failed, trying the next one:', error);
+    }
+  }
+
+  throw new Error('Could not fetch "' + url + '"' + (lastError ? ' (' + lastError.message + ')' : ''));
+}
+
 async function getSoundingGraphImgUrl(url)
 {
-  try {
-    const response = await fetch(corsUrl + encodeURIComponent(url));
-    const html = await response.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const img = doc.querySelectorAll('img')[0];
-    return 'https://www.meteociel.fr/' + img.getAttribute('src');
-  } catch (error) {
-    console.error('Error fetching the data:', error);
-  }
+  const html = await fetchThroughCorsProxy(url);
+
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  // Not every page has an image, and not every image has a src. Grabbing the first <img>
+  // blindly is what made this throw "Cannot read properties of undefined".
+  const img = Array.from(doc.querySelectorAll('img')).find(el => (el.getAttribute('src') || '').trim().length > 0);
+
+  if (!img) throw new Error('No sounding chart image found on the page');
+
+  const src = img.getAttribute('src').trim();
+
+  // meteociel returns relative paths, but do not mangle an absolute URL if one ever shows up
+  return /^https?:\/\//i.test(src) ? src : 'https://www.meteociel.fr/' + src.replace(/^\/+/, '');
 }
 
 // Function to scrape table data from the given URL
 async function scrapeTableData(url)
 {
-  try {
-    const response = await fetch(corsUrl + encodeURIComponent(url));
-    const html = await response.text();
+  const html = await fetchThroughCorsProxy(url);
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
 
-    // Select the rows of the main table (starting at line 51)
-    const rows = doc.querySelectorAll('table:nth-of-type(2) tr:not(:first-child)');
+  // Select the rows of the main table (starting at line 51)
+  const rows = doc.querySelectorAll('table:nth-of-type(2) tr:not(:first-child)');
 
-    const tableData = [];
+  const tableData = [];
 
-    rows.forEach(row => {
-      const cells = row.querySelectorAll('td');
+  rows.forEach(row => {
+    const cells = row.querySelectorAll('td');
 
-      const rowData = {
-        alt : parseFloat(cells[0].textContent),
-        p : parseFloat(cells[1].textContent),
-        t : parseFloat(cells[2].textContent),
-        tw : parseFloat(cells[3].textContent),
-        td : parseFloat(cells[4].textContent),
-        rh : parseFloat(cells[5].textContent),
-        vel : parseFloat(cells[6].textContent.split(' / ')[1]),
-        angle : parseFloat(cells[6].textContent.split(' / ')[0]),
-      };
+    // Rows that are not data rows (headers, spacers, error pages) do not have all seven
+    // columns; reading textContent off a missing cell threw and killed the whole scrape.
+    if (cells.length < 7) return;
 
-      const hasNaN = Object.values(rowData).some(v => Number.isNaN(v));
+    const rowData = {
+      alt : parseFloat(cells[0].textContent),
+      p : parseFloat(cells[1].textContent),
+      t : parseFloat(cells[2].textContent),
+      tw : parseFloat(cells[3].textContent),
+      td : parseFloat(cells[4].textContent),
+      rh : parseFloat(cells[5].textContent),
+      vel : parseFloat(cells[6].textContent.split(' / ')[1]),
+      angle : parseFloat(cells[6].textContent.split(' / ')[0]),
+    };
 
-      if (!hasNaN) // discard if the row contains any NaN
-        tableData.push(rowData);
-    });
-    return tableData;
+    const hasNaN = Object.values(rowData).some(v => Number.isNaN(v));
 
-  } catch (error) {
-    console.error('Error fetching the data:', error);
-  }
+    if (!hasNaN) // discard if the row contains any NaN
+      tableData.push(rowData);
+  });
+
+  return tableData;
+}
+
+function setSoundingStatus(message, isError)
+{
+  const statusEl = document.getElementById('soundingStatus');
+  if (!statusEl) return;
+
+  statusEl.textContent = message || '';
+  statusEl.hidden = !message;
+  statusEl.classList.toggle('error', !!isError);
 }
 
 async function loadSounding(stationID, timeStamp)
 {
-
   const imgMapType = 1; // 0 = large classic emagram   1 = small emagram
   const graphPageUrl = 'https://www.meteociel.fr/cartes_obs/sondage_display.php?id=' + stationID + '&map=' + imgMapType + '&date=' + timeStamp;
   const tablePageUrl = 'https://www.meteociel.fr/cartes_obs/sondage_display.php?id=' + stationID + '&map=4&date=' + timeStamp;
 
-  const SoundingGraphImgUrl = await getSoundingGraphImgUrl(graphPageUrl);
-
   const soundingImgEl = document.getElementById('soundingPreview');
-  soundingImgEl.src = SoundingGraphImgUrl;
 
-  // console.log(graphPageUrl, SoundingGraphImgUrl, tablePageUrl);
+  setSoundingStatus('Loading sounding data…', false);
 
-  return scrapeTableData(tablePageUrl);
+  const [graphResult, tableResult] = await Promise.allSettled([
+    getSoundingGraphImgUrl(graphPageUrl),
+    scrapeTableData(tablePageUrl),
+  ]);
+
+  if (graphResult.status === 'fulfilled') {
+    soundingImgEl.src = graphResult.value;
+    soundingImgEl.alt = 'Sounding chart for the selected station and time';
+  } else {
+    console.error('Error fetching the sounding chart:', graphResult.reason);
+    soundingImgEl.removeAttribute('src'); // do not leave a broken image behind
+    soundingImgEl.alt = 'Sounding chart unavailable';
+  }
+
+  const soundingTableData = tableResult.status === 'fulfilled' ? tableResult.value : null;
+
+  if (tableResult.status === 'rejected')
+    console.error('Error fetching the sounding table:', tableResult.reason);
+
+  if (soundingTableData && soundingTableData.length > 10) {
+    setSoundingStatus('', false);
+  } else if (graphResult.status === 'fulfilled') {
+    setSoundingStatus('No usable sounding data for this station and time. Try another station or cycle.', true);
+  } else {
+    setSoundingStatus('Could not load the sounding. The data service may be unreachable — try again or pick another station.', true);
+  }
+
+  // console.log(graphPageUrl, tablePageUrl);
+
+  // undefined means "no sounding": the simulation then falls back to its own initial profile
+  // instead of forcing the atmosphere towards a broken one.
+  return soundingTableData && soundingTableData.length > 10 ? soundingTableData : undefined;
 }
 
 function sampleIsInvalid(s) { return isNaN(s.t) || isNaN(s.td) || isNaN(s.vel); }
@@ -354,11 +427,11 @@ const guiControls_default = {
   sunIntensity : 1.0,
   waterTemperature : 25.0, // °C
   dynamicWaterTemperature : true,
-  landEvaporation : 0.00005,
-  waterEvaporation : 0.0001,
+  landEvaporation : 0.0005,
+  waterEvaporation : 0.02,    // raised to the top of the slider range: the sea feeds the air strongly so the deck can build up
   evapHeat : 2.90,          //  Real: 2260 J/g
   meltingHeat : 0.43,       //  Real:  334 J/g
-  condensationRate : 0.0050,
+  condensationRate : 0.005,
   waterWeight : 0.25,       // 0.50
   inactiveDroplets : 0,
   aboveZeroThreshold : 1.0, // PRECIPITATION
@@ -374,9 +447,11 @@ const guiControls_default = {
   displayMode : 'DISP_REAL',
   wrapHorizontally : true,
   SmoothCam : true,
-  cameraShake : true,
   camSpeed : 0.01,
   exposure : 1.0,
+  displayResScale : 0.72, // internal display resolution (0..1). The scene renders at this fraction
+                          // of the window and the single post pass upscales it, cutting fragment
+                          // cost while the smooth upscale keeps the visuals intact.
   timeOfDay : 9.9,
   latitude : 45.0,
   month : 6.65, // Northern hemisphere summer solstice
@@ -399,7 +474,7 @@ const guiControls_default = {
   IterPerFrame : 10,
   auto_IterPerFrame : true,
   sound : true,
-  dryLapseRate : 10.0,     // Real: 9.8 degrees / km
+  dryLapseRate : 10.0,     // Real: 9.8 degrees / km. 10 is the neutral dry-adiabatic lapse rate.
   simHeight : 12000,       // meters
   twelveHourClock : false, // only for display.  false = metric
   lengthUnit : 'LENGTH_UNIT_METRIC',
@@ -450,11 +525,9 @@ var dryLapse;
 const timePerIteration = 0.00008; // in hours (0.00008 = 0.288 sec, at 40m cell size that means the speed of light & sound = 138.88 m/s = 500 km/h)
 
 var NUM_DROPLETS;
-const NUM_DROPLETS_DEVIDER = 25; // 25
+const NUM_DROPLETS_DEVIDER = 1; // no divider — max droplets = full sim resolution
 
 let hdrFBO;
-
-let bloomFBOs = [];
 
 let ambientLightFBOs = [];
 let emittedLightFBO;
@@ -552,24 +625,31 @@ function IR_temp(IR)
 }
 
 ////////////// Water Functions ///////////////
+// These have to stay in sync with shaders/common.glsl, where the same limits keep the simulation
+// itself from blowing up: the saturation curve rises with the power of 17, so without a physical
+// temperature range and a cap, one corrupt cell asks for gigagrams of water.
 const wf_devider = 250.0;
 const wf_pow = 17.0;
+const minPhysTemp = 173.15; // -100 °C
+const maxPhysTemp = 333.15; // +60 °C
+const maxWaterCap = 200.0;  // g/m³
 
 function maxWater(Td)
 {
-  return Math.pow(Td / wf_devider,
-                  wf_pow); // w = ((Td)/(250))^(18) // Td in Kelvin, w in grams per m^3
+  if (!Number.isFinite(Td))
+    return 0.0;
+  const T = Math.min(Math.max(Td, minPhysTemp), maxPhysTemp);
+  return Math.min(Math.pow(T / wf_devider, wf_pow), maxWaterCap); // w = ((Td)/(250))^(17) // Td in Kelvin, w in grams per m^3
 }
 
 function dewpoint(W)
 {
-  //  if (W < 0.00001) // can't remember why this was here...
-  //    return 0.0;
-  //  else
-  return wf_devider * Math.pow(W, 1.0 / wf_pow);
+  if (!Number.isFinite(W) || W < 0.00001)
+    return 0.0;
+  return Math.min(wf_devider * Math.pow(Math.min(W, maxWaterCap), 1.0 / wf_pow), maxPhysTemp);
 }
 
-function relativeHumd(T, W) { return (W / maxWater(T)) * 100.0; }
+function relativeHumd(T, W) { return (Math.max(W, 0.0) / Math.max(maxWater(T), 0.0001)) * 100.0; }
 
 // Print funtions:
 
@@ -812,27 +892,13 @@ class FBO // wraps texture, frambuffer and info in one
   }
 }
 
-function createHdrFBO() { hdrFBO = new FBO(canvas.width, canvas.height, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR); }
-
-function createBloomFBOs()
-{
-  let res = new Vec2D(canvas.width, canvas.height);
-
-  bloomFBOs.length = 0;           // empty array
-  for (let i = 0; i < 100; i++) { // max bloom iterations
-    let width = res.x >> i;       // right shift to devide by 2 multiple times
-    let height = res.y >> i;
-
-    //  console.log('BloomFBO', i, width, height)
-
-    if (width < 2 || height < 2)
-      break; // stop when texture resolution is 2 x 2
-
-    let fbo = new FBO(width, height, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
-    bloomFBOs.push(fbo);
-  }
+function createHdrFBO() {
+  // Render the scene at a reduced internal resolution and let the post pass upscale it.
+  const scale = (guiControls && guiControls.displayResScale) || 1.0;
+  const w = Math.max(2, Math.round(canvas.width * scale));
+  const h = Math.max(2, Math.round(canvas.height * scale));
+  hdrFBO = new FBO(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
 }
-
 
 function createAmbientLightFBOs()
 {
@@ -1254,19 +1320,30 @@ class Weatherstation
 let weatherStations = []; // array holding all weather stations
 
 
-// Replace NaN and infinite values in the simulation state loaded from a save file with safe values, and returns how many values were replaced.
+// Replace NaN, infinite and out of range values in the simulation state loaded from a save file with safe values, and returns how many values were replaced.
 // Even a single NaN value will spread trough the entire fluid simulation within a few iterations, making the simulation explode right after loading.
 // Save files can contain NaN values when the simulation had already exploded before it was saved, or when the file is corrupted.
+// Finite but impossible values are limited as well: that is what the state of an already exploded
+// simulation looks like when it is saved without having produced a NaN yet, and a single cell with
+// 1e15 g/m³ of vapor starts the explosion again in the first iteration, because both evaporation
+// and latent heat scale with the maximum water content of the air.
 function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
 {
   // texture channel indices, matching the defines in shaders/common.glsl
+  const BASE_PRESSURE = 2;
   const BASE_TEMPERATURE = 3;
 
   const WATER_TOTAL = 0;
+  const WATER_CLOUD = 1;
+  const WATER_PRECIP_OR_SOIL = 2;
 
   const WALL_TYPE = 0;
   const WALL_DISTANCE = 1; // 0 means the cell is a wall
   const WALLTYPE_WATER = 2;
+
+  const maxVel = 1.0;      // cells per iteration, far above any real wind speed
+  const maxPressure = 0.5; // pressure is added to the velocities every iteration, so it has to stay small
+  const maxSurfaceWater = 100.0; // smoke or precipitation in the air
 
   const numCells = sim_res_x * sim_res_y;
   let numReplaced = 0;
@@ -1296,6 +1373,16 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
       rowReferenceTemp[y] = nearestValidTemp;
   }
 
+  // Potential temperature contains the lapse rate of the whole column, so the limit for an air cell
+  // moves up with its height. This has to match cleanTempK() in shaders/common.glsl.
+  let lapseTotal = 120.0; // 12 km with a normal lapse rate, used when the settings are not known yet
+  if (typeof dryLapse == 'number' && Number.isFinite(dryLapse))
+    lapseTotal = dryLapse;
+  else if (typeof guiControls == 'object' && guiControls)
+    lapseTotal = (Number(guiControls.simHeight) * Number(guiControls.dryLapseRate)) / 1000.0;
+  if (!Number.isFinite(lapseTotal) || lapseTotal <= 0.0)
+    lapseTotal = 120.0;
+
   for (var cell = 0; cell < numCells; cell++) {
     let i = cell * 4;
     let y = Math.floor(cell / sim_res_x);
@@ -1303,30 +1390,61 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
     let isWall = wallTexI8[i + WALL_DISTANCE] == 0;
     let isWaterWall = isWall && wallTexI8[i + WALL_TYPE] == WALLTYPE_WATER;
 
-    // base texture: horizontal & vertical velocity, pressure, temperature
+    // base texture: horizontal & vertical velocity, pressure, temperature.
+    // A save can contain finite but unusably huge values too (for example a
+    // previous overflow may have been flushed to a very large float). Those
+    // values are just as capable of poisoning the first simulation pass.
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(baseTexF32[i + c])) {
-        if (c == BASE_TEMPERATURE) {
-          if (isWaterWall)
-            baseTexF32[i + c] = CtoK(25.0); // standard water temperature
-          else if (isWall)
-            baseTexF32[i + c] = 1000.0; // wall indicator value, just like the shaders use
-          else
-            baseTexF32[i + c] = rowReferenceTemp[y];
-        } else {
-          baseTexF32[i + c] = 0.0; // velocities and pressure
+      let v = baseTexF32[i + c];
+      let fixed = v;
+
+      if (c == BASE_TEMPERATURE) {
+        if (isWaterWall)
+          fixed = clamp(Number.isFinite(v) ? v : CtoK(25.0), CtoK(0.0), CtoK(40.0)); // water temperature is absolute and limited, just like in the shaders
+        else if (isWall)
+          fixed = Number.isFinite(v) ? v : 1000.0; // wall indicator value, just like the shaders use
+        else {
+          let lapse = (y / sim_res_y) * lapseTotal;
+          fixed = Number.isFinite(v) ? clamp(v, minPhysTemp + lapse, maxPhysTemp + lapse) : rowReferenceTemp[y];
         }
+      } else if (!Number.isFinite(v)) {
+        fixed = 0.0; // velocities and pressure
+      } else if (c == BASE_PRESSURE) {
+        fixed = clamp(v, -maxPressure, maxPressure);
+      } else {
+        fixed = clamp(v, -maxVel, maxVel);
+      }
+
+      if (fixed !== v) {
+        baseTexF32[i + c] = fixed;
         numReplaced++;
       }
     }
 
     // water texture: total water, cloud water, precipitation / soil moisture, smoke / snow
     for (var c = 0; c < 4; c++) {
-      if (!Number.isFinite(waterTexF32[i + c])) {
-        if (c == WATER_TOTAL && isWall)
-          waterTexF32[i + c] = isWaterWall ? 1002.0 : 1001.0; // wall indicator values, just like the shaders use
-        else
-          waterTexF32[i + c] = 0.0;
+      let v = waterTexF32[i + c];
+      let fixed = v;
+
+      if (c == WATER_TOTAL && isWall) {
+        fixed = Number.isFinite(v) && v > 1000.0 ? v : (isWaterWall ? 1002.0 : 1001.0); // wall indicator values, just like the shaders use
+        fixed = Math.max(fixed, 0.0);
+      } else if (c == WATER_TOTAL) {
+        fixed = Number.isFinite(v) ? clamp(v, 0.0, maxWaterCap) : 0.0;
+      } else if (c == WATER_CLOUD) {
+        fixed = Number.isFinite(v) && v >= 0.0 ? Math.min(v, Number.isFinite(waterTexF32[i + WATER_TOTAL]) ? waterTexF32[i + WATER_TOTAL] : 0.0) : 0.0; // cloud water is part of the total water
+        if (isWall)
+          fixed = 0.0; // walls never contain cloud water
+      } else if (!Number.isFinite(v)) {
+        fixed = 0.0;
+      } else if (isWall) {
+        fixed = c == WATER_PRECIP_OR_SOIL ? clamp(v, 0.0, 1000.0) : clamp(v, 0.0, 4000.0); // soil moisture in mm, snow cover in cm
+      } else {
+        fixed = clamp(v, 0.0, maxSurfaceWater); // precipitation and smoke in the air
+      }
+
+      if (fixed !== v) {
+        waterTexF32[i + c] = fixed;
         numReplaced++;
       }
     }
@@ -1336,8 +1454,17 @@ function sanitizeLoadedState(baseTexF32, waterTexF32, wallTexI8, precipArray)
   for (var d = 0; d < NUM_DROPLETS; d++) {
     let i = d * 5;
 
-    if (Number.isFinite(precipArray[i + 0]) && Number.isFinite(precipArray[i + 1]) && Number.isFinite(precipArray[i + 2]) && Number.isFinite(precipArray[i + 3]) &&
-        Number.isFinite(precipArray[i + 4]))
+    let broken = false;
+    for (var c = 0; c < 5; c++) {
+      if (!Number.isFinite(precipArray[i + c]))
+        broken = true;
+    }
+    if (precipArray[i + 2] > 50.0 || precipArray[i + 3] > 50.0) // a droplet that carries an impossible amount of water comes from an exploded simulation
+      broken = true;
+    if (precipArray[i + 2] >= 0.0 && (Math.abs(precipArray[i + 0]) > 1.0 || Math.abs(precipArray[i + 1]) > 1.0)) // active, but outside the simulation area: it would never come back
+      broken = true;
+
+    if (!broken)
       continue;
 
     // reset to a randomly seeded inactive droplet, just like initRainDrops() generates
@@ -1367,7 +1494,36 @@ function sanitizeGuiControls(controlsObject)
     if (typeof defaultValue === 'number' && !Number.isFinite(controlsObject[key])) // null, NaN and undefined(missing) are not valid numerical settings
       controlsObject[key] = defaultValue;
   }
+
+  // A save file can contain any number, also ones far outside what the sliders allow. The rates
+  // below all scale how fast water is added to the air or how much heat a phase change releases,
+  // so an absurd value makes the vapor cycle run away before the limits in the shaders can damp it.
+  for (const [key, range] of Object.entries(guiControls_range)) {
+    let v = Number(controlsObject[key]);
+    if (!Number.isFinite(v))
+      v = guiControls_default[key];
+    controlsObject[key] = clamp(v, range[0], range[1]);
+  }
 }
+
+// Same limits as the dat.gui sliders, see setupDatGui().
+const guiControls_range = {
+  landEvaporation : [ 0.0, 0.01 ],
+  waterEvaporation : [ 0.0, 0.02 ],
+  evapHeat : [ 0.0, 5.0 ],
+  meltingHeat : [ 0.0, 5.0 ],
+  condensationRate : [ 0.001, 0.020 ],
+  globalDrying : [ 0.0, 0.0001 ],
+  globalHeating : [ -0.001, 0.001 ],
+  greenhouseGases : [ 0.0, 0.01 ],
+  waterGreenHouseEffect : [ 0.0, 0.01 ],
+  IR_rate : [ 0.0, 10.0 ],
+  evapRate : [ 0.0001, 0.005 ],
+  growthRate0C : [ 0.0001, 0.005 ],
+  growthRate_30C : [ 0.0001, 0.005 ],
+  waterTemperature : [ 0.0, 40.0 ],
+  brushIntensity : [ 0.005, 0.05 ],
+};
 
 
 async function loadData()
@@ -1504,39 +1660,22 @@ class LoadingBar
 {
   #overlay;
   #fill;
-  #percentText;
-  #statusText;
-  #stepText;
   percent;
   description;
 
   constructor(percentIn)
   {
     this.percent = percentIn == null ? 0 : percentIn;
-    this.description = 'INITIALIZING';
+    this.description = 'Initializing';
 
-    // reworked loading screen: themed boot-sequence overlay (styled in index.html)
+    // Simple loading screen: a rainbow bar over the storm background photo
+    // (both styled in index.html). The bar is the whole rainbow; a dark mask shrinks
+    // from the right so the colours sweep in left to right as loading progresses.
     this.#overlay = document.createElement('div');
     this.#overlay.className = 'ls-overlay';
-    this.#overlay.innerHTML = `
-        <div class="ls-box">
-            <div class="ls-head">
-                <div class="ls-glyph"></div>
-                <div class="ls-titles">
-                    <div class="ls-title">2D WEATHER SANDBOX</div>
-                    <div class="ls-sub">ATMOS-KERNEL // BOOT SEQUENCE</div>
-                </div>
-                <div class="ls-led"></div>
-            </div>
-            <div class="ls-status">INITIALIZING</div>
-            <div class="ls-track"><div class="ls-fill"></div></div>
-            <div class="ls-meta"><span class="ls-percent">0%</span><span class="ls-step">SYS 00</span></div>
-        </div>`;
+    this.#overlay.innerHTML = `<div class="ls-track"><div class="ls-fill"></div></div>`;
 
     this.#fill = this.#overlay.querySelector('.ls-fill');
-    this.#percentText = this.#overlay.querySelector('.ls-percent');
-    this.#statusText = this.#overlay.querySelector('.ls-status');
-    this.#stepText = this.#overlay.querySelector('.ls-step');
 
     this.#update();
 
@@ -1568,10 +1707,7 @@ class LoadingBar
   {
     return new Promise((resolve) => {
       const pct = Math.min(100, Math.max(0, Math.round(this.percent)));
-      this.#fill.style.width = pct + '%';
-      this.#percentText.textContent = pct + '%';
-      this.#statusText.textContent = this.description;
-      this.#stepText.textContent = 'SYS ' + String(pct).padStart(2, '0');
+      this.#fill.style.width = (100 - pct) + '%'; // mask: shrink from the right to reveal the rainbow
       setTimeout(() => { resolve(); }, 5);
     });
   }
@@ -1615,7 +1751,15 @@ async function prepareSounding()
 
   epochTime += hour * 3600;
 
-  soundingData = await loadSounding(stationSelector.options[stationSelector.selectedIndex].value, epochTime);
+  try {
+    soundingData = await loadSounding(stationSelector.options[stationSelector.selectedIndex].value, epochTime);
+  } catch (error) {
+    // This runs from change handlers that do not await it, so an unhandled rejection here used
+    // to surface as "Uncaught (in promise)" and left the sounding UI in whatever state it was.
+    console.error('Error preparing the sounding:', error);
+    soundingData = undefined;
+    setSoundingStatus('Could not load the sounding. The data service may be unreachable — try again or pick another station.', true);
+  }
 }
 
 async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initialRainDrops)
@@ -1642,13 +1786,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     #Xvel;
     #Yvel;
     #Zvel;
-
-    // ── reworked camera shake: high frequency random offset shaking ──
-    #shakeStart = -1e12;   // ms timestamp when the shake was triggered
-    #shakeDuration = 1000; // ms (default: 1 second)
-    #shakeIntensity = 0;   // peak offset in screen pixels
-    shakeOffsetX = 0;      // view offset (world units) applied during rendering this frame
-    shakeOffsetY = 0;
 
     constructor()
     {
@@ -1757,73 +1894,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       }
     }
 
-    // ── reworked camera shake ──
-    // intensityPx: peak random offset in screen pixels. duration: 1 second by default.
-    startShake(intensityPx, durationMs = 1000)
-    {
-      if (intensityPx < 0.5)
-        return;
-      const now = performance.now();
-      // never let a weaker strike cut short a stronger ongoing shake
-      this.#shakeIntensity = Math.max(intensityPx, this.#shakeAmplitudePx(now));
-      this.#shakeStart = now;
-      this.#shakeDuration = durationMs;
-    }
-
-    // shake intensity falls off with how close the lightning strike was
-    shakeFromLightning(strikeX, strikeIntensity)
-    {
-      let camXnorm = 1. - (this.curXpos + 1.0) / 2.0;
-
-      let camDistFromSim = cellHeight * sim_res_x * 0.5 / this.curZoom; // asuming 90° HFOV
-
-      let camHorDistFromStrike = (strikeX - camXnorm) * cellHeight * sim_res_x;
-
-      let distance = Math.hypot(camDistFromSim, camHorDistFromStrike);
-
-      const maxShakeDistance = 20000; // meters; further away nothing is felt
-      let proximity = clamp(1.0 - distance / maxShakeDistance, 0.0, 1.0);
-
-      let intensityPx = 24.0 * proximity * proximity * clamp(strikeIntensity, 0.5, 2.5);
-
-      this.startShake(intensityPx, 1000); // duration: 1 second
-    }
-
-    #shakeAmplitudePx(now)
-    {
-      const elapsed = now - this.#shakeStart;
-      if (elapsed >= this.#shakeDuration)
-        return 0;
-      return this.#shakeIntensity * (1.0 - elapsed / this.#shakeDuration); // linear decay
-    }
-
-    // pick a fresh random offset every frame -> high frequency shaking
-    updateShake()
-    {
-      const ampPx = this.#shakeAmplitudePx(performance.now());
-      if (ampPx <= 0) {
-        this.shakeOffsetX = 0;
-        this.shakeOffsetY = 0;
-        return;
-      }
-      const px = (Math.random() * 2.0 - 1.0) * ampPx;
-      const py = (Math.random() * 2.0 - 1.0) * ampPx;
-      // convert screen pixels to view (world) units
-      this.shakeOffsetX = (px * 2.0) / (canvas.width * this.curZoom);
-      this.shakeOffsetY = (py * 2.0) / (canvas.height * this.curZoom * canvas_aspect);
-    }
-
-    stopShake()
-    {
-      this.#shakeStart = -1e12;
-      this.#shakeIntensity = 0;
-      this.shakeOffsetX = 0;
-      this.shakeOffsetY = 0;
-    }
-
-    // camera position including the shake offset, for the rendering 'view' uniforms
-    get viewX() { return this.curXpos + this.shakeOffsetX; }
-    get viewY() { return this.curYpos + this.shakeOffsetY; }
+    // camera position, for the rendering 'view' uniforms
+    get viewX() { return this.curXpos; }
+    get viewY() { return this.curYpos; }
   }
 
   cam = new Camera();
@@ -3609,6 +3682,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'dynamicWaterTemperature'), guiControls.dynamicWaterTemperature ? 1.0 : 0.0);
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'evapHeat'), guiControls.evapHeat);
     gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterWeight'), guiControls.waterWeight);
+    // water cells without a stored temperature (older save files, flooded land) fall back to this one
+    gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
     gl.useProgram(velocityProgram);
     gl.uniform1f(gl.getUniformLocation(velocityProgram, 'dragMultiplier'), guiControls.dragMultiplier);
     gl.uniform1f(gl.getUniformLocation(velocityProgram, 'wind'), guiControls.wind);
@@ -3834,6 +3909,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.uniform1f(gl.getUniformLocation(advectionProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
         gl.useProgram(lightingProgram);
         gl.uniform1f(gl.getUniformLocation(lightingProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
+        gl.useProgram(boundaryProgram);
+        gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterTemperature'), CtoK(guiControls.waterTemperature));
       })
       .name('Lake / Sea Temperature (°C)');
 
@@ -3842,13 +3919,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'dynamicWaterTemperature'), guiControls.dynamicWaterTemperature ? 1.0 : 0.0);
     });
 
-    water_folder.add(guiControls, 'landEvaporation', 0.0, 0.0002, 0.00001)
+    water_folder.add(guiControls, 'landEvaporation', 0.0, 0.01, 0.0005)
       .onChange(function() {
         gl.useProgram(boundaryProgram);
         gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'landEvaporation'), guiControls.landEvaporation);
       })
       .name('Land Evaporation');
-    water_folder.add(guiControls, 'waterEvaporation', 0.0, 0.0004, 0.00001)
+    water_folder.add(guiControls, 'waterEvaporation', 0.0, 0.02, 0.001)
       .onChange(function() {
         gl.useProgram(boundaryProgram);
         gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'waterEvaporation'), guiControls.waterEvaporation);
@@ -3995,6 +4072,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
+    display_folder.add(guiControls, 'displayResScale', 0.40, 2.0, 0.02)
+      .onChange(function() {
+        createHdrFBO(); // rebuild the HDR buffer at the new internal resolution
+      })
+      .name('Display Resolution');
+
     display_folder.add(guiControls, 'camSpeed', 0.001, 0.050, 0.001).name('Camera Pan Speed');
 
 
@@ -4010,8 +4093,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       .name('Wrap Horizontally');
 
     display_folder.add(guiControls, 'SmoothCam').onChange(function() { cam.smooth = guiControls.SmoothCam; }).name('Smooth Camera');
-
-    display_folder.add(guiControls, 'cameraShake').name('Camera Shake');
 
     display_folder.add(guiControls, 'showGraph').onChange(hideOrShowGraph).name('Show Sounding Graph').listen();
     display_folder.add(guiControls, 'showDrops').name('Show Droplets').listen();
@@ -4092,7 +4173,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     datGui.add(guiControls, 'paused').onChange(handlePause).name('Paused').listen();
     datGui.add(guiControls, 'download').name('Save Simulation to File');
 
-    datGui.width = 400;
+    datGui.width = 230;
   }
 
   // guiControls.paused = true; // pause before first iteration for debugging
@@ -4431,8 +4512,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     soundingGraph.graphCanvas.width = window.innerHeight;
 
     // Render output framebuffers need to match canvas resolution
-    createBloomFBOs(); // recreate bloom framebuffers
-    createHdrFBO();    // recreate hdr framebuffer
+    createHdrFBO(); // recreate hdr framebuffer
   });
 
   function logSample()
@@ -4958,8 +5038,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const IRtempDisplayShader = await loadShader('IRtempDisplayShader.frag');
 
   const postProcessingShader = await loadShader('postProcessingShader.frag');
-  const isolateBrightPartsShader = await loadShader('isolateBrightPartsShader.frag');
-  const bloomBlurShader = await loadShader('bloomBlurShader.frag');
+  // blur used to spread the emitted light for the ambient light term (it was also used for the
+  // screen bloom, which is gone)
+  const lightBlurShader = await loadShader('bloomBlurShader.frag');
 
 
   // create programs
@@ -4986,9 +5067,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const IRtempDisplayProgram = createProgram(dispVertexShader, IRtempDisplayShader);
 
   const postProcessingProgram = createProgram(postProcessingVertexShader, postProcessingShader);
-  const isolateBrightPartsProgram = createProgram(postProcessingVertexShader, isolateBrightPartsShader);
-  const bloomBlurProgram = createProgram(postProcessingVertexShader, bloomBlurShader);
-  // const lightBlurProgram = createProgram(postProcessingVertexShader, bloomBlurShader);
+  const lightBlurProgram = createProgram(postProcessingVertexShader, lightBlurShader);
 
 
   await loadingBar.set(80, 'Setting up textures');
@@ -5735,12 +5814,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
         }
 
-        if (lineWidth > 0.6 && Math.random() < 0.008 * (1.0 - y / height))
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, lineWidth * 0.42, Math.floor(maxLength * 0.96)); // branch length
+        // Thin, short leader branches (real lightning forks, not thick tree limbs): ~1px, a few
+        // of them, mostly up high.
+        if (lineWidth > 0.6 && Math.random() < 0.018 * (1.0 - y / height))
+          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, Math.max(0.9, lineWidth * 0.32), Math.floor(maxLength * 0.55));
       }
     }
 
-    drawBolt(width / 2, 0, Math.PI / 12, 2.5, height);
+    drawBolt(width / 2, 0, Math.PI / 12, 3.2, height);
     generateLightningTexture(i, new ImageData(data, width, height));
   }
 
@@ -5803,13 +5884,24 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   createHdrFBO();
 
-  createBloomFBOs();
-
   var texelSizeX = 1.0 / sim_res_x;
   var texelSizeY = 1.0 / sim_res_y;
 
   dryLapse = (guiControls.simHeight * guiControls.dryLapseRate) / 1000.0; // total lapse rate from bottem to top of atmosphere
 
+
+  // generate Initial temperature profile
+
+  var initial_T = new Float32Array(504); // sim_res_y + 1
+  var initial_W = new Float32Array(504); // the matching water vapor profile, see setupShader.frag
+
+  for (var y = 0; y < sim_res_y + 1; y++) {
+    let altitude = y / (sim_res_y + 1) * guiControls.simHeight;
+    var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
+
+    initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
+    initial_W[y] = maxWater(CtoK(realTemp) + (y < sim_res_y * 0.60 ? 5.0 : -2.0)); // strongly-saturated layer, tall (matches setupShader.frag)
+  }
 
   // generate sounding data for forcing in sim
 
@@ -5824,7 +5916,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       let soundingSample = soundingForSim[y];
 
       realWorldSounding_T[y] = realToPotentialT(CtoK(soundingSample.t), y); // initial temperature profile
-      realWorldSounding_W[y] = maxWater(CtoK(soundingSample.td), y);        // initial temperature profile
+      realWorldSounding_W[y] = maxWater(CtoK(soundingSample.td));          // saturation at the dew point
       realWorldSounding_Vel[y] = soundingSample.vel;
     }
     // console.log(realWorldSounding_T);
@@ -5834,16 +5926,28 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     console.log('No valid sounding loaded!');
   }
 
-  // generate Initial temperature profile
-
-  var initial_T = new Float32Array(504); // sim_res_y + 1
-
-  for (var y = 0; y < sim_res_y + 1; y++) {
-    let altitude = y / (sim_res_y + 1) * guiControls.simHeight;
-    var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
-
-    initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
+  // The profiles are uploaded to the shaders and used as the target of the sounding forcing, so
+  // they must not contain NaN or values outside the physical range: one NaN row forces the vapor
+  // and temperature of every single cell in that row, which is a vapor explosion. When no sounding
+  // could be loaded, the initial state of the simulation is used as the target instead, so that
+  // forcing does nothing instead of pulling the atmosphere towards zero.
+  function repairProfile(profile, fallback, lo, hi)
+  {
+    for (var i = 0; i < profile.length; i++) {
+      let last = Math.min(i, sim_res_y); // rows above the simulation repeat the top row, they must never be read as zero
+      let v = i <= sim_res_y ? profile[i] : fallback[last];
+      if (!Number.isFinite(v))
+        v = fallback[last];
+      profile[i] = clamp(Number.isFinite(v) ? v : lo, lo, hi);
+    }
+    return profile;
   }
+
+  repairProfile(initial_T, initial_T, minPhysTemp, maxPhysTemp + dryLapse);
+  repairProfile(initial_W, initial_W, 0.0, maxWaterCap);
+  repairProfile(realWorldSounding_T, initial_T, minPhysTemp, maxPhysTemp + dryLapse);
+  repairProfile(realWorldSounding_W, initial_W, 0.0, maxWaterCap);
+  repairProfile(realWorldSounding_Vel, new Float32Array(504), -1.0, 1.0);
 
   function createProfileTexture(profile)
   {
@@ -5940,6 +6044,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'waterTex'), 1);
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'wallTex'), 2);
   gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightTex'), 3);
+  gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightningTex'), 4);
+  gl.uniform1i(gl.getUniformLocation(lightingProgram, 'lightningDataTex'), 5);
   gl.uniform1f(gl.getUniformLocation(lightingProgram, 'dryLapse'), dryLapse);
 
   // Display programs:
@@ -6024,11 +6130,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   gl.useProgram(postProcessingProgram);
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'hdrTex'), 0);
-  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex'), 1);
-
-
-  gl.useProgram(isolateBrightPartsProgram);
-  gl.uniform1i(gl.getUniformLocation(isolateBrightPartsProgram, 'hdrTex'), 0);
 
   gl.useProgram(lightningLocationProgram);
   gl.uniform1i(gl.getUniformLocation(lightningLocationProgram, 'precipFeedbackTex'), 0);
@@ -6127,7 +6228,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
 
     cam.move();
-    cam.updateShake();
 
     prevMouseXinSim = mouseXinSim;
     prevMouseYinSim = mouseYinSim;
@@ -6350,6 +6450,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               destDisplayVAO = precipDisplayVao_0;
             }
             even = !even;
+            // lightning strike (units 4/5) → its luminance becomes the glow carried in the
+            // emitted-light alpha, diffused by the ambient-light blur and added unclamped by the display
+            gl.activeTexture(gl.TEXTURE4);
+            gl.bindTexture(gl.TEXTURE_2D, lightningTextures[Math.floor(iterNum / 400) % numLightningTextures]);
+            gl.activeTexture(gl.TEXTURE5);
+            gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
+            gl.uniform1f(gl.getUniformLocation(lightingProgram, 'iterNum'), iterNum);
+            gl.uniform2f(gl.getUniformLocation(lightingProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
 
             gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1 ]); // calc light
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -6407,17 +6515,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
               gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-              if (guiControls.sound || guiControls.cameraShake) {
+              if (guiControls.sound) {
                 gl.readBuffer(gl.COLOR_ATTACHMENT0);
                 var lightningDataValues = new Float32Array(4);
                 gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
                 // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
                 if (Math.round(lightningDataValues[2]) == iterNum) {
-                  if (guiControls.sound)
-                    soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
-                  if (guiControls.cameraShake)
-                    cam.shakeFromLightning(lightningDataValues[0], Math.pow(lightningDataValues[3], 2.0));
+                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
                 }
               }
             }
@@ -6518,20 +6623,23 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, ambientLightFBOs[0].frameBuffer);
         gl.viewport(0, 0, ambientLightFBOs[0].width, ambientLightFBOs[0].height);
-        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        // Alpha carries the lightning glow — clear it to 0 so only the strike's
+        // emitted light (diffused from emittedLightFBO) contributes. The old 1.0
+        // added a constant +1 glow to the whole scene.
+        gl.clearColor(0.0, 0.0, 0.0, 0.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         let prevFBO = emittedLightFBO; // the previous FBO
 
-        gl.useProgram(bloomBlurProgram);
-        gl.uniform1i(gl.getUniformLocation(bloomBlurProgram, 'bloomTexture'), 0);
+        gl.useProgram(lightBlurProgram);
+        gl.uniform1i(gl.getUniformLocation(lightBlurProgram, 'inputTexture'), 0);
 
-        for (let blurTimes = 0; blurTimes < 2; blurTimes++) { // blur twice for smoother result
+        for (let blurTimes = 0; blurTimes < 1; blurTimes++) { // one pass is enough: the mip chain already spreads the light over the whole screen, the second pass only repeated the cost
 
           // downsample
           for (let i = 1; i < ambientLightFBOs.length; i++) {
             let destFBO = ambientLightFBOs[i];
-            gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
+            gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
 
             gl.viewport(0, 0, destFBO.width, destFBO.height);
 
@@ -6553,7 +6661,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           for (let i = ambientLightFBOs.length - 2; i >= 0; i--) {
             let destFBO = ambientLightFBOs[i];
 
-            gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
+            gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
@@ -6571,8 +6679,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFBO.frameBuffer); // render to hdr framebuffer
-      // gl.viewport(0, 0, sim_res_x, sim_res_y);
-      gl.viewport(0, 0, canvas.width, canvas.height);
+      // Render the scene at the (reduced) internal resolution; the post pass upscales it.
+      gl.viewport(0, 0, hdrFBO.width, hdrFBO.height);
       gl.clearColor(0.0, 0.0, 0.0, 1.0); // background color
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -6648,80 +6756,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       gl.disable(gl.BLEND);
 
-      // Post processing:
+      // Post processing: tone map the HDR frame straight to the canvas. This used to be a
+      // bright-extraction pass plus a full multi-level blur chain, whose result was added back
+      // over the frame; with the bloom gone it is a single full screen pass.
 
       gl.bindVertexArray(postProcessingVao);
-
-
-      gl.useProgram(isolateBrightPartsProgram);
-
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomFBOs[0].frameBuffer); // brightPartsFrameBuffer
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0.0, 0.0, 0.0, 1.0);                            // background color
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.drawBuffers([ gl.COLOR_ATTACHMENT0 ]);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // render bright parts to seperate texture
-
-
-      // BLOOM
-
-      let prevFBO = bloomFBOs[0]; // the previous FBO
-
-      gl.useProgram(bloomBlurProgram);
-      gl.uniform1i(gl.getUniformLocation(bloomBlurProgram, 'bloomTexture'), 0);
-
-
-      // downsample
-      for (let i = 1; i < bloomFBOs.length; i++) {
-        let destFBO = bloomFBOs[i];
-        gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
-
-        gl.viewport(0, 0, destFBO.width, destFBO.height);
-
-        // bind texture
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, destFBO.frameBuffer);
-        // gl.drawBuffers([ gl.BACK ]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // draw to destFBO
-
-        prevFBO = destFBO;
-      }
-
-      // upsample and add
-      gl.blendFunc(gl.ONE, gl.ONE); // add to the existing texture in the framebuffer
-      gl.enable(gl.BLEND);
-
-      for (let i = bloomFBOs.length - 2; i >= 0; i--) {
-        let destFBO = bloomFBOs[i];
-
-        gl.uniform2f(gl.getUniformLocation(bloomBlurProgram, 'texelSize'), prevFBO.texelSizeX, prevFBO.texelSizeY);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, prevFBO.texture);
-
-        gl.viewport(0, 0, destFBO.width, destFBO.height);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, destFBO.frameBuffer);
-        // gl.drawBuffers([ gl.BACK ]);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // draw to destFBO
-
-        prevFBO = destFBO;
-      }
-
-      gl.disable(gl.BLEND);
 
       gl.useProgram(postProcessingProgram);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, bloomFBOs[0].texture);
-
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
       if (SETUP_MODE) {
         gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'exposure'), 50.0);
@@ -7009,6 +7052,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'sunAngle'), solarZenithAngle);
     gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'minShadowLight'), minShadowLight);
     gl.useProgram(skyBackgroundDisplayProgram);
+    gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'sunAngle'), solarZenithAngle);
     gl.uniform1f(gl.getUniformLocation(skyBackgroundDisplayProgram, 'minShadowLight'), minShadowLight);
 
     if (guiControls.dayNightCycle)
@@ -7040,7 +7084,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         let precipBufferValues = new ArrayBuffer(NUM_DROPLETS * valsPerDroplet * Float32Array.BYTES_PER_ELEMENT);
         let precipBufferArray = new Float32Array(precipBufferValues);
-        gl.bindBuffer(gl.ARRAY_BUFFER, precipVertexBuffer_0);
+        // Save the buffer that holds the current droplet state. `destDisplayVAO` is
+        // the display VAO of the destination of the last transform-feedback pass,
+        // so it always points at the newest data (the buffers swap every pass).
+        gl.bindBuffer(gl.ARRAY_BUFFER, destDisplayVAO == precipDisplayVao_1 ? precipVertexBuffer_1 : precipVertexBuffer_0);
         gl.getBufferSubData(gl.ARRAY_BUFFER, 0, precipBufferArray);
         gl.bindBuffer(gl.ARRAY_BUFFER, null); // unbind again
 
@@ -7088,7 +7135,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
       return program; // linked succesfully
     } else {
-      throw 'ERROR: ' + gl.getProgramInfoLog(program);
+      const errorLog = gl.getProgramInfoLog(program);
+      console.error('Program linking failed:', errorLog);
+      throw 'ERROR: ' + errorLog;
       gl.deleteProgram(program);
     }
   }
@@ -7150,7 +7199,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
       // Compile error
-      throw filename + ' COMPILATION ' + gl.getShaderInfoLog(shader);
+      const errorLog = gl.getShaderInfoLog(shader);
+      console.error('Shader compilation failed:', filename, errorLog);
+      throw filename + ' COMPILATION ' + errorLog;
     }
     return new Promise(async (resolve) => {
       await loadingBar.add(3, 'Loading shader: ' + nameIn);
