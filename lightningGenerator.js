@@ -25,11 +25,20 @@ function generateLightningBolt(width, height) {
   function drawChannel(x, y, widthTop, widthBottom, jag, color, branchChance, branchWidth) {
     let angle = (Math.random() - 0.5) * 0.6;          // slight initial lean
     const targetAngle = (Math.random() - 0.5) * 0.35; // the lean it drifts back toward
+    const margin = 2;                                  // keep the bolt inside the canvas
     while (y < height) {
       const step = 2.5 + Math.random() * 3.5;         // short, irregular steps
       angle += (Math.random() - 0.5) * jag;           // strong zig-zag
       angle -= (angle - targetAngle) * 0.09;          // steer gently back on course
-      const nx = x + Math.sin(angle) * step;
+      // Steer back inside the canvas so the leader never clips at the left/right
+      // border (a clipped edge reads as a broken segment). The closer to the edge,
+      // the harder it is pushed back toward the middle.
+      const edge = width * 0.18;                       // "danger zone" width at each side
+      if (x < edge) angle += (edge - x) / edge * 0.9;  // near the left edge -> push right
+      else if (x > width - edge) angle -= (x - (width - edge)) / edge * 0.9; // near the right edge -> push left
+      // Hard-clamp the endpoint so a step can never land off-canvas.
+      let nx = x + Math.sin(angle) * step;
+      nx = Math.max(margin, Math.min(width - margin, nx));
       const ny = y + Math.cos(angle) * step;
       const depth = Math.min(ny / height, 1.0);
       ctx.lineWidth = widthTop + (widthBottom - widthTop) * depth; // taper with depth
@@ -53,12 +62,17 @@ function generateLightningBolt(width, height) {
     const startY = y;
     const len = (0.12 + Math.random() * 0.22) * height; // branches are short
     const endY = y + len;
+    const margin = 2;
     ctx.strokeStyle = branchColor;
     while (y < endY) {
       const step = 2.5 + Math.random() * 3.5;
       angle += (Math.random() - 0.5) * 0.8;             // jagged
       angle -= (angle - baseAngle) * 0.10;              // drift back toward the base lean
-      const nx = x + Math.sin(angle) * step;
+      const edge = width * 0.18;                        // "danger zone" width at each side
+      if (x < edge) angle += (edge - x) / edge * 0.9;   // near the left edge -> push right
+      else if (x > width - edge) angle -= (x - (width - edge)) / edge * 0.9; // near the right edge -> push left
+      let nx = x + Math.sin(angle) * step;
+      nx = Math.max(margin, Math.min(width - margin, nx));
       const ny = y + Math.cos(angle) * step;
       const t = Math.min((ny - startY) / len, 1.0);
       ctx.lineWidth = Math.max(widthTop * (1.0 - t * 0.85), 0.4); // taper to a point
