@@ -182,7 +182,7 @@ void main()
 
       disableDroplet();
 
-    } else if (newPos.y < -1.0 /* || base[TEMPERATURE] > 500. */ || water[TOTAL] > 1000.) { // water[TOTAL] > 1000.     base[TEMPERATURE] < 500.      to low or wall
+    } else if (newPos.y < -1.0 || base[TEMPERATURE] > 500. || water[TOTAL] > 1000.) { // hit ground, wall, or excessive moisture
 
       if (texture(baseTex, vec2(texCoord.x, texCoord.y + texelSize.y))[TEMPERATURE] > 500.) // if above cell was already wall. because of fast fall speed
         newPos.y += texelSize.y * 1.;                                                       // *2. ? move position up so that the water/snow is correcty added to the ground
