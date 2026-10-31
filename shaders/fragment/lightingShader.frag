@@ -37,83 +37,51 @@ uniform float dryLapse;
 #include "common.glsl"
 
 // ───────────────────────── lightning emission ─────────────────────────
-// The strike is written into the ALPHA of the emitted-light buffer (reflectedLight.a).
-// The ambient-light blur chain then diffuses it, and the display shader adds that
-// channel back unclamped as the strike's glow/halo — the same tone-mapped ambient path
-// fire and city lights use, so there is no separate post-process bloom.
+// The flash is written into the ALPHA of the emitted-light buffer (reflectedLight.a). The
+// ambient-light blur chain diffuses it, and the display shader adds that channel back
+// unclamped as the strike's glow — the same tone-mapped ambient path fire and city lights use,
+// so there is no separate post-process bloom. Only a broad, soft footprint of the flash belongs
+// here; the sharp channel is drawn by the display shader itself.
 uniform sampler2D lightningTex;
 uniform sampler2D lightningDataTex;
 uniform float iterNum;
 uniform vec2 aspectRatios; // [0] sim       [1] canvas
 
-const vec2 lightningTexRes = vec2(1024, 2048);
-const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
+// Must match realisticDisplayShader.frag, otherwise the glow and the bolt drift apart.
+const float LEADER_END = 2.2;
+const float STROKE_TAU = 1.30;
+const float FLASH_END = 12.0;
 
-const vec3 tempColorPalette[] = vec3[](vec3(1., 0.7, 1.), vec3(1., 0.5, 1.), vec3(1., 0.3, 1.), vec3(0.8, 0., 0.8), vec3(0.65, 0., 0.6), vec3(0.5, 0., 0.5), vec3(0.35, 0., 0.6), vec3(0., 0., 0.7), vec3(0., 0., 1.), vec3(0., 0.30, 1.), vec3(0., 0.44, 1.), vec3(0., 0.62, 1.0), vec3(0., 0.80, 1.0), vec3(0., 1., 1.), vec3(0., 0.50, 0.), vec3(0., 0.61, 0.0), vec3(0., 0.72, 0.), vec3(0., 0.85, 0.),
-                                       vec3(0., 1., 0.), vec3(0.5, 1., 0.), vec3(0.80, 1., 0.), vec3(1., 1., 0.), vec3(1., 0.8, 0.), vec3(1., 0.6, 0.), vec3(1., 0.4, 0.), vec3(1., 0., 0.), vec3(0.85, 0., 0.), vec3(0.72, 0., 0.), vec3(0.61, 0., 0.), vec3(0.52, 0., 0.));
-
-float calcLightningTime(float startIterNum)
+float strokePulse(float t, float t0, float amp, float tau)
 {
-  float lightningTime = iterNum - startIterNum;
-  return lightningTime / 5.0; // must match the display's pace (stock /5.0) so the glow fades with the bolt
+  float d = t - t0;
+  if (d < 0.0)
+    return 0.0;
+  return amp * (1.0 - exp(-d * 26.0)) * exp(-d / tau);
 }
 
-float lightningIntensityOverTime(float Tin, vec2 lightningPos, float intensity)
+// Total optical output of the flash; `ic` is 1 for an intra-cloud flash.
+float flashBrightness(float age, float intensity, float ic)
 {
-  // Single smooth flash (in step with the display shader's bolt) — no uneven multi-pulse flicker.
-  float T = max(Tin - 1., 0.);
-  return max((1. / (0.05 + pow(T * 2.8, 3.))) - 0.005, 0.) * pow(intensity, 2.0);
-}
+  float b = 0.0;
 
-vec3 displayLightning(vec2 pos, float lightningTime, float currentLightningIntensity)
-{
-  vec2 lightningTexCoord = texCoord;
-
-  lightningTexCoord.x -= mod(pos.x, 1.);
-
-  lightningTexCoord.y -= pos.y;
-
-  float scaleMult = 1. / pos.y; // 1.0 means lightning is as tall as the simheight
-
-  lightningTexCoord.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
-  lightningTexCoord.y *= -scaleMult;
-
-  lightningTexCoord.x += 0.5;
-
-  if (lightningTexCoord.x < 0.01 || lightningTexCoord.x > 1.01 || lightningTexCoord.y < 0.01 || lightningTexCoord.y > 1.01)
-    return vec3(0);
-
-  float pixVal = texture(lightningTex, lightningTexCoord).r;
-
-  const float branchShowFactor = 2.5;
-  const float leaderBrightness = 50000.;
-  const float mainBoltBrightness = 100000.;
-
-  float brightnessThreshold = 1. - lightningTime * branchShowFactor;
-  brightnessThreshold += lightningTexCoord.y * branchShowFactor;
-
-  brightnessThreshold = clamp(brightnessThreshold, 0., 1.);
-
-  if (lightningTime > 1.0) { // main bolt
-    brightnessThreshold = 0.95;
-    currentLightningIntensity *= mainBoltBrightness;
+  if (ic > 0.5) {
+    b += strokePulse(age, 0.45, 0.90, 1.05);
+    b += strokePulse(age, 1.90, 0.70, 0.95);
+    b += strokePulse(age, 3.20, 0.50, 0.85);
+    b += strokePulse(age, 4.50, 0.28, 0.80);
   } else {
-    currentLightningIntensity = leaderBrightness;
+    b += strokePulse(age, LEADER_END, 1.00, STROKE_TAU);
+    b += strokePulse(age, LEADER_END + 1.55, 0.72, STROKE_TAU * 0.85);
+    b += strokePulse(age, LEADER_END + 2.90, 0.50, STROKE_TAU * 0.75);
+    b += strokePulse(age, LEADER_END + 4.20, 0.30, STROKE_TAU * 0.65);
+    b += strokePulse(age, LEADER_END + 5.60, 0.16, STROKE_TAU * 0.60);
+    b += 0.05 * smoothstep(LEADER_END, LEADER_END + 0.3, age) * exp(-max(age - LEADER_END, 0.0) / 5.0);
   }
 
-  pixVal -= brightnessThreshold;
-  pixVal = max(pixVal, 0.0);
-  pixVal *= currentLightningIntensity;
-
-  // Ground-reach ramp (matches the display shader) so the glow halo also reaches the ground.
-  pixVal *= 1.0 + 0.8 * smoothstep(0.55, 1.0, lightningTexCoord.y);
-
-  // violet (matches the display bolt); only its luminance feeds the glow halo
-  vec3 lightningCol = vec3(0.72, 0.5, 1.0);
-
-  return max(pixVal * lightningCol, vec3(0));
+  b *= 0.55 + 0.45 * intensity;
+  return b * (1.0 - smoothstep(FLASH_END - 4.0, FLASH_END, age));
 }
-
 
 // ========================= reworked longwave IR =========================
 // The IR fluxes no longer crawl forward one cell per iteration. Each lighting
@@ -319,19 +287,26 @@ void main()
     }
 
     // ── lightning strike → glow (alpha of the emitted-light buffer) ──────────────
+    // A spreading, soft footprint of the flash. The cloud around it scatters the light, so the
+    // glow is allowed to be wide where the air is thick; the display shader cuts the real,
+    // sharp channel back in on top of it.
     reflectedLight.a = 0.0;
     {
       vec4 lightningData = texture(lightningDataTex, vec2(0.5));
-      if (lightningData[INTENSITY] > 1.0) {
-        vec2 lightningPos = lightningData.xy;
-        float lightningTime = calcLightningTime(lightningData[START_ITERNUM]);
-        float lightningIntensity = lightningIntensityOverTime(lightningTime, lightningPos, lightningData[INTENSITY]);
-        float cloudMask = clamp(max(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0), 0.0, 1.0);
-        // The 0.06 base (stock) cut the glow almost entirely where there is no cloud (the lower
-        // half of the bolt), so the halo stopped short of the ground. Raise the base so the glow
-        // carries down the full length of the bolt.
-        vec3 bolt = displayLightning(lightningPos, lightningTime, lightningIntensity) * (0.18 + 0.82 * cloudMask);
-        reflectedLight.a = max(max(bolt.r, bolt.g), bolt.b);
+      float lightningIntensity = abs(lightningData[INTENSITY]);
+      float lightningAge = max(iterNum - lightningData[START_ITERNUM], 0.0);
+      float lightningIC = lightningData[INTENSITY] < -0.05 ? 1.0 : 0.0;
+      float lightningBright = flashBrightness(lightningAge, lightningIntensity, lightningIC);
+
+      if (lightningBright > 0.0015) {
+        vec2 dv = vec2((texCoord.x - lightningData.x) * aspectRatios[0], texCoord.y - lightningData.y * 0.5);
+        float r2 = dot(dv, dv);
+        float cloudMask = clamp(texture(waterTex, texCoord)[CLOUD] * 13.6, 0.0, 1.0);
+        // An intra-cloud flash is buried in the cloud and lights it from inside; a CG bolt also
+        // lights the column of air between the cloud and the ground.
+        float radius = mix(0.030, 0.050, lightningIC);
+        float glow = exp(-r2 / radius);
+        reflectedLight.a = glow * lightningBright * (0.30 + 0.70 * cloudMask);
       }
     }
   }

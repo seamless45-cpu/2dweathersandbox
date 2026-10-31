@@ -1659,7 +1659,13 @@ function loadImage(url)
 class LoadingBar
 {
   #overlay;
-  #fill;
+  #label;
+  #pct;
+  #foot;
+  #flash;
+  #quarter;
+  #timer;
+  #failed;
   percent;
   description;
 
@@ -1667,19 +1673,63 @@ class LoadingBar
   {
     this.percent = percentIn == null ? 0 : percentIn;
     this.description = 'Initializing';
+    this.#quarter = 0;
+    this.#failed = false;
 
-    // Simple loading screen: a rainbow bar over the storm background photo
-    // (both styled in index.html). The bar is the whole rainbow; a dark mask shrinks
-    // from the right so the colours sweep in left to right as loading progresses.
+    // The loading screen is a storm still that drifts behind the project mark, the current step
+    // and a thin progress rule (all styled in index.html as .ls-*). The step text comes from the
+    // callers below, which already describe what they are doing, so there is no reason to hide
+    // it from the user: a progress bar with no label is just a spinner.
     this.#overlay = document.createElement('div');
     this.#overlay.className = 'ls-overlay';
-    this.#overlay.innerHTML = `<div class="ls-track"><div class="ls-fill"></div></div>`;
+    this.#overlay.innerHTML = `
+      <div class="ls-bg"></div>
+      <div class="ls-scrim"></div>
+      <div class="ls-flash"></div>
+      <div class="ls-inner">
+        <div class="ls-brand">
+          <svg class="ls-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M19.3 1.2 5.6 18.4h7.6L10.9 30.8 26.4 12.1h-7.9z"/>
+          </svg>
+          <div>
+            <div class="ls-title">2D Weather Sandbox</div>
+            <div class="ls-sub">Atmospheric Simulation</div>
+          </div>
+        </div>
+        <div class="ls-meter">
+          <div class="ls-step">
+            <span class="ls-label" role="status" aria-live="polite">Initializing</span>
+            <span class="ls-pct">0%</span>
+          </div>
+          <div class="ls-track"><div class="ls-fill"></div></div>
+        </div>
+        <div class="ls-foot">Setting up the simulation</div>
+      </div>`;
 
-    this.#fill = this.#overlay.querySelector('.ls-fill');
+    this.#label = this.#overlay.querySelector('.ls-label');
+    this.#pct = this.#overlay.querySelector('.ls-pct');
+    this.#foot = this.#overlay.querySelector('.ls-foot');
+    this.#flash = this.#overlay.querySelector('.ls-flash');
 
     this.#update();
 
     document.body.appendChild(this.#overlay);
+
+    // The foot line is the only spare room on the screen, so it carries a few notes about the
+    // simulation instead of a second copy of the step text.
+    const tips = [
+      'Intra-cloud flashes light the deck from within; CG strikes reach the ground.',
+      'A higher simulation resolution sharpens the clouds and costs speed.',
+      'Every strike is generated from a seed, so a flash can be reproduced exactly.',
+    ];
+    let tip = 0;
+    this.#timer = setInterval(() => {
+      if (this.#failed)
+        return;
+      tip = (tip + 1) % tips.length;
+      this.#foot.textContent = tips[tip];
+    }, 6000);
+    this.#foot.textContent = tips[0];
   }
 
   async add(num, text)
@@ -1698,8 +1748,11 @@ class LoadingBar
 
   async showError(error)
   {
+    this.#failed = true;
     this.#overlay.classList.add('ls-error');
-    this.description = error;
+    // the label is the short status (the step row is uppercased), the detail goes underneath
+    this.description = 'Load failed';
+    this.#foot.textContent = error;
     await this.#update();
   }
 
@@ -1707,19 +1760,43 @@ class LoadingBar
   {
     return new Promise((resolve) => {
       const pct = Math.min(100, Math.max(0, Math.round(this.percent)));
-      this.#fill.style.width = (100 - pct) + '%'; // mask: shrink from the right to reveal the rainbow
+
+      this.#overlay.style.setProperty('--p', pct + '%');
+      this.#pct.textContent = pct + '%';
+
+      if (this.description && this.#label.textContent !== this.description)
+      {
+        this.#label.textContent = this.description;
+        // restart the little fade so a changed step is noticeable without a flash of layout
+        this.#label.style.animation = 'none';
+        void this.#label.offsetWidth;
+        this.#label.style.animation = '';
+      }
+
+      // A short sky flash every quarter of the bar. It ties the screen to what the sandbox is
+      // about, and gives the wait a sense of progress even when one step takes a while.
+      const quarter = Math.floor(pct / 25);
+      if (quarter > this.#quarter && !this.#overlay.classList.contains('ls-error'))
+      {
+        this.#quarter = quarter;
+        this.#flash.classList.remove('ls-strike');
+        void this.#flash.offsetWidth;
+        this.#flash.classList.add('ls-strike');
+      }
+
       setTimeout(() => { resolve(); }, 5);
     });
   }
 
   remove()
   {
+    clearInterval(this.#timer);
     const overlay = this.#overlay;
     overlay.classList.add('ls-done'); // fade out (CSS transition)
     setTimeout(() => {
       if (overlay.parentNode)
         overlay.parentNode.removeChild(overlay);
-    }, 500);
+    }, 550);
   }
 }
 
@@ -2047,7 +2124,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       return await Promise.all(soundPromises);
     }
 
-    soundThunder(x, y, intensity)
+    // `intraCloud` flashes are heard through the cloud: they are softer, longer and lack the
+    // sharp crack of a nearby return stroke, which is why they have their own sound set.
+    soundThunder(x, y, intensity, intraCloud = false)
     {
       let camXnorm = 1. - (cam.curXpos + 1.0) / 2.0;
 
@@ -2070,9 +2149,18 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       soundDelay /= simTimeMult;
 
-      let soundArray = intensity > 1.0 ? this.thunderCGSounds : this.thunderCCSounds;
+      let soundArray = intraCloud ? this.thunderCCSounds : this.thunderCGSounds;
+      if (!soundArray || soundArray.length === 0)
+        soundArray = this.thunderCGSounds?.length ? this.thunderCGSounds : this.thunderCCSounds;
+      if (!soundArray || soundArray.length === 0)
+        return; // sounds still loading, or sound files unavailable
+
+      // An intra-cloud flash is further away on average (it is up in the cloud, not next to
+      // you at ground level) and its energy arrives as a longer rumble, so it is quieter.
+      const volume = (intensity / (distance * 0.001)) * (intraCloud ? 0.75 : 1.0);
+
       let randomThunderSound = soundArray[Math.floor(Math.random() * soundArray.length)];
-      this.playOnce(randomThunderSound, intensity / (distance * 0.001), leftRightBalance, soundDelay);
+      this.playOnce(randomThunderSound, volume, leftRightBalance, soundDelay);
     }
 
     playOnce(buffer, volume = 1, leftRightBalance = 0, delay = 0)
@@ -5524,6 +5612,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const numLightningTextures = 5;
   const lightningTextureWidth = 512;
   const lightningTextureHeight = 1024;
+  const LIGHTNING_SEED = 20251; // fixed, so every load gets the same (but different per variant) bolts
 
 
   frameBuff_0 = gl.createFramebuffer(); // global for weather stations
@@ -5760,9 +5849,15 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     if (!lightningTextures[i])
       lightningTextures[i] = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, lightningTextures[i]);
+    // The channel map stores geometry in R/G/B, so the upload must not premultiply anything.
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imgData);
-    // gl.generateMipmap(gl.TEXTURE_2D);                                                // optional
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); // LINEAR_MIPMAP_LINEAR
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    // The mip chain is not for the channel itself (that is always sampled at full resolution and
+    // has to stay crisp); the display shader samples a high mip level as a cheap, smooth blur of
+    // the stroke, which is what gives the flash a halo that follows the zig-zag of the channel.
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -5778,51 +5873,17 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   }
 
+  // Fallback used when a worker cannot be created or does not answer in time. It runs the very
+  // same generator on the main thread (the script is also loaded by index.html), so the bolts
+  // are identical either way — only the moment they are ready differs.
   function generateFastLightningTexture(i)
   {
-    const width = 720;
-    const height = 1440;
-    const data = new Uint8ClampedArray(width * height * 4);
-
-    function setPixel(x, y, brightness)
-    {
-      if (x < 0 || x >= width || y < 0 || y >= height)
-        return;
-      const index = (Math.floor(y) * width + Math.floor(x)) * 4;
-      const value = Math.max(data[index], brightness);
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
-      data[index + 3] = 255;
+    if (typeof generateLightningBolt !== 'function') {
+      console.warn('Lightning generator script missing, skipping texture generation.');
+      return;
     }
-
-    function drawBolt(startX, startY, angle, lineWidth, maxLength)
-    {
-      let x = startX;
-      let y = startY;
-      for (let step = 0; step < maxLength && y < height; step++) {
-        x += Math.sin(angle) * 1.8;
-        y += Math.cos(angle) * 1.8;
-        angle += (Math.random() - 0.55) * 0.55;
-        angle -= angle * 0.08;
-
-        const radius = Math.max(1, Math.round(lineWidth));
-        for (let yy = -radius; yy <= radius; yy++) {
-          for (let xx = -radius; xx <= radius; xx++) {
-            if (xx * xx + yy * yy <= radius * radius)
-              setPixel(x + xx, y + yy, 255);
-          }
-        }
-
-        // Thin, short leader branches (real lightning forks, not thick tree limbs): ~1px, a few
-        // of them, mostly up high.
-        if (lineWidth > 0.6 && Math.random() < 0.018 * (1.0 - y / height))
-          drawBolt(x, y, angle + (Math.random() - 0.5) * 1.8, Math.max(0.9, lineWidth * 0.32), Math.floor(maxLength * 0.55));
-      }
-    }
-
-    drawBolt(width / 2, 0, Math.PI / 12, 3.2, height);
-    generateLightningTexture(i, new ImageData(data, width, height));
+    const img = generateLightningBolt(lightningTextureWidth, lightningTextureHeight, LIGHTNING_SEED + i * 7919, 2);
+    generateLightningTexture(i, new ImageData(img.data, img.width, img.height));
   }
 
   function generateLightningTextureAsync(i)
@@ -5856,12 +5917,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         generateFastLightningTexture(i);
       }, 5000);
       lightningGeneratorWorker.onmessage = (imgElement) => {
-        // downloadImageData(imgElement.data); // for debugging
-
         if (!finish())
           return;
-        if (imgElement.data) {
-          generateLightningTexture(i, imgElement.data);
+        if (imgElement && imgElement.data && imgElement.width && imgElement.height) {
+          generateLightningTexture(i, new ImageData(imgElement.data, imgElement.width, imgElement.height));
         } else {
           console.warn('Falling back to fast lightning texture generation: worker returned no image data.');
           generateFastLightningTexture(i);
@@ -5874,7 +5933,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         generateFastLightningTexture(i);
       };
 
-      lightningGeneratorWorker.postMessage({width : lightningTextureWidth, height : lightningTextureHeight}); // Keep the same 1:2 aspect ratio with much lower memory use.
+      // Each variant gets its own seed so the five bolts are different but reproducible.
+      lightningGeneratorWorker.postMessage({
+        width : lightningTextureWidth,
+        height : lightningTextureHeight,
+        seed : LIGHTNING_SEED + i * 7919,
+        supersample : 2,
+      });
     });
   }
 
@@ -6522,7 +6587,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
                 // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
                 if (Math.round(lightningDataValues[2]) == iterNum) {
-                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1], Math.pow(lightningDataValues[3], 2.0));
+                  // The sign of the intensity is the flash type: negative = intra-cloud. A CG
+                  // strike is a sharp crack; an IC flash is the long rumble heard through the
+                  // cloud, so they use their own sound sets (see SoundSystem).
+                  const strikeIntensity = lightningDataValues[3];
+                  soundSystem.soundThunder(lightningDataValues[0], lightningDataValues[1],
+                                           Math.pow(Math.abs(strikeIntensity), 2.0), strikeIntensity < 0.0);
                 }
               }
             }

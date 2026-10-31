@@ -9,6 +9,7 @@
     <script type="text/javascript" src="libraries/pako.min.js"></script>
     <script type="text/javascript" src="libraries/chart.js"></script>
     <script type="text/javascript" src="libraries/chartjs-adapter-date-fns.js"></script>
+    <script type="text/javascript" src="lightningGenerator.js"></script>
     <script type="text/javascript" src="app.js"></script>
     <link rel="shortcut icon" type="image/x-icon" href="296027059_1784035083155840.jpg">
     <style>
@@ -463,38 +464,117 @@
         .fill-arc { stroke: var(--success); stroke-width: 24; fill: none; stroke-linecap: round; transition: stroke 0.4s linear; }
         .value { font-size: 56px; font-weight: 700; fill: var(--text); text-anchor: middle; font-family: var(--font-mono); }
         /* ===== LOADING SCREEN ===== */
-        /* A single, simple rainbow progress bar centred on the storm background photo.
-           The bar itself is the full rainbow; a dark mask (the fill) shrinks from the right
-           so the colours sweep in left to right as loading progresses. No box, LED, percent
-           or step text — just the bar. The overlay is opaque so it fully covers the UI behind. */
+        /* A full-bleed storm still that drifts slowly behind the project mark, the current step
+           and a thin progress rule. It is on screen for a couple of seconds at most, so it has
+           to read at a glance: one centred column, no chrome, and the only motion is the drift
+           of the photo, the sweep of the bar and a short lightning flicker at every quarter. */
         .ls-overlay {
             position: fixed; inset: 0; z-index: 90;
-            display: flex; align-items: center; justify-content: center;
-            background:
-                radial-gradient(130% 100% at 50% 42%, rgba(4, 6, 12, 0.12) 0%, rgba(4, 6, 12, 0.66) 100%),
-                url('resources/img/loading-bg.jpg') center / cover no-repeat #05070d;
+            display: grid; place-items: center;
+            background: #05070d;
+            overflow: hidden;
             opacity: 1;
-            transition: opacity 0.5s ease;
+            transition: opacity 0.55s ease;
         }
         .ls-overlay.ls-done { opacity: 0; pointer-events: none; }
-        .ls-track {
+        .ls-bg {
+            position: absolute; inset: -8%;
+            background: url('resources/img/loading-bg.jpg') center / cover no-repeat #05070d;
+            filter: saturate(0.85) brightness(0.7);
+            animation: ls-drift 34s ease-in-out infinite alternate;
+            will-change: transform;
+        }
+        @keyframes ls-drift {
+            from { transform: scale(1.00) translate3d(-1.2%, 0.8%, 0); }
+            to   { transform: scale(1.09) translate3d(1.4%, -1.2%, 0); }
+        }
+        .ls-scrim {
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(120% 90% at 50% 36%, rgba(4,6,12,0.10) 0%, rgba(4,6,12,0.80) 74%, rgba(3,4,9,0.96) 100%),
+                linear-gradient(to top, rgba(3,5,10,0.90) 0%, rgba(3,5,10,0) 46%);
+        }
+        /* the sky flash that fires at every quarter of the bar */
+        .ls-flash {
+            position: absolute; inset: 0; pointer-events: none; opacity: 0;
+            background: radial-gradient(62% 46% at 50% 20%, rgba(206,224,255,0.60), rgba(140,170,255,0.12) 45%, transparent 72%);
+        }
+        .ls-flash.ls-strike { animation: ls-strike 0.9s ease-out; }
+        @keyframes ls-strike {
+            0%   { opacity: 0; }
+            6%   { opacity: 0.55; }
+            14%  { opacity: 0.08; }
+            23%  { opacity: 0.40; }
+            48%  { opacity: 0.05; }
+            100% { opacity: 0; }
+        }
+        .ls-inner {
             position: relative;
-            width: min(520px, 74vw);
-            height: 13px;
-            border-radius: 999px;
-            overflow: hidden;
-            background: linear-gradient(90deg, #ff2d55, #ff8a00, #ffd60a, #2ee06a, #18c7ff, #5b6cff, #b13cff);
-            box-shadow: 0 8px 34px rgba(0,0,0,0.6), 0 0 24px rgba(80, 120, 255, 0.35), inset 0 0 0 1px rgba(255,255,255,0.16);
+            width: min(560px, 82vw);
+            animation: ls-in 0.6s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+        }
+        @keyframes ls-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: none; }
+        }
+        .ls-brand { display: flex; align-items: center; gap: 15px; }
+        .ls-mark {
+            width: 34px; height: 34px; flex: none;
+            fill: #d5e6ff;
+            filter: drop-shadow(0 0 10px rgba(120, 170, 255, 0.85));
+        }
+        .ls-title {
+            font-family: var(--font); font-size: 21px; font-weight: 600;
+            color: #eaf1ff; letter-spacing: 0.01em; line-height: 1.15;
+        }
+        .ls-sub {
+            margin-top: 3px;
+            font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.34em;
+            text-transform: uppercase; color: rgba(148, 176, 214, 0.78);
+        }
+        .ls-meter { margin-top: 26px; }
+        .ls-step {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+            font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.07em;
+            text-transform: uppercase; color: rgba(198, 216, 240, 0.92);
+            min-height: 14px;
+        }
+        .ls-label { animation: ls-label-in 0.35s ease both; }
+        @keyframes ls-label-in {
+            from { opacity: 0; transform: translateY(3px); }
+            to   { opacity: 1; transform: none; }
+        }
+        .ls-pct { font-variant-numeric: tabular-nums; color: rgba(150, 180, 220, 0.82); }
+        .ls-track {
+            position: relative; margin-top: 10px; height: 3px; border-radius: 999px;
+            background: rgba(146, 176, 214, 0.16); overflow: hidden;
         }
         .ls-fill {
-            position: absolute; top: 0; right: 0; height: 100%; width: 100%;
-            background: rgba(5, 8, 14, 0.84);
-            border-radius: 999px;
-            transition: width 0.28s ease;
+            position: absolute; left: 0; top: 0; bottom: 0;
+            width: var(--p, 1%); border-radius: 999px;
+            background: linear-gradient(90deg, #2a8fff, #7fd0ff 58%, #d3ebff);
+            box-shadow: 0 0 12px rgba(90, 170, 255, 0.85), 0 0 30px rgba(70, 140, 255, 0.45);
+            transition: width 0.45s cubic-bezier(0.25, 0.8, 0.3, 1);
         }
-
-        .ls-overlay.ls-error .ls-track { background: #e11d2e; box-shadow: 0 2px 16px rgba(225,29,46,0.5); }
-        .ls-overlay.ls-error .ls-fill { background: rgba(5, 8, 14, 0.55); }
+        /* bright head of the bar, so the leading edge reads as a travelling spark */
+        .ls-fill::after {
+            content: ""; position: absolute; right: -1px; top: -2px; bottom: -2px; width: 2px;
+            background: #eaf6ff; box-shadow: 0 0 10px #bfe3ff;
+        }
+        .ls-foot {
+            margin-top: 14px; min-height: 16px;
+            font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+            color: rgba(132, 158, 194, 0.72);
+        }
+        .ls-overlay.ls-error .ls-fill {
+            background: linear-gradient(90deg, #ff5a5f, #ff9a7a);
+            box-shadow: 0 0 12px rgba(255, 90, 95, 0.8);
+        }
+        .ls-overlay.ls-error .ls-label { color: #ff8f8a; }
+        .ls-overlay.ls-error .ls-foot { color: #ffb4b0; }
+        @media (prefers-reduced-motion: reduce) {
+            .ls-bg, .ls-flash, .ls-inner, .ls-label { animation: none !important; }
+        }
     </style>
 </head>
 
