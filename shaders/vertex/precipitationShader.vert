@@ -138,13 +138,15 @@ void main()
         vec4 lightningData = texture(lightningDataTex, vec2(0.5)); // data from last lightning bolt
 
         const float lightningCloudDensityThreshold = 1.0;          // matches the droplet-spawn threshold so dense stratus can still flash
-        const float lightningChanceMultiplier = 0.2;                // higher multiplier makes eligible clouds strike more often
+        const float lightningChanceMultiplier = 0.2;               // higher multiplier makes eligible clouds strike more often
 
         float cloudPlusPrecipDensity = water[CLOUD] + water[PRECIPITATION];
 
         float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
 
-        const float minIterationsSinceLastLightningBolt = 1.; // shorter cooldown allows more frequent strikes
+        // A flash needs a few iterations to run its course (leader, return stroke, restrikes),
+        // and only the most recent strike is kept, so two strikes may not overlap.
+        const float minIterationsSinceLastLightningBolt = 6.;
 
         if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
             random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
@@ -153,7 +155,23 @@ void main()
           gl_PointSize = 1.0;
           feedback.xy = texCoord;
           feedback[START_ITERNUM] = iterNum;
-          feedback[INTENSITY] = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
+
+          // ── cloud-to-ground or intra-cloud? ──
+          // Which one a flash turns out to be depends on the charge structure inside the storm,
+          // which this model does not carry. What it does carry are the things that correlate
+          // with it: a deep, heavily loaded, strongly precipitating cell with a vigorous mixed
+          // phase produces much more cloud-to-ground lightning, while a shallow or weakly
+          // precipitating deck flashes inside itself. Most real flashes (around three in four)
+          // never leave the cloud, so the bias starts there.
+          float cgLikelihood = clamp(map_range(cloudPlusPrecipDensity, 1.5, 7.0, 0.04, 0.50), 0.04, 0.50);
+          cgLikelihood += clamp(map_range(KtoC(realTemp) + 40.0, 0.0, 25.0, 0.0, 0.16), 0.0, 0.16); // cold cloud tops host the charge separation
+          float isCloudToGround = step(random2d(vec2(water[CLOUD] * 3.7, base[TEMPERATURE] * 1.31)), cgLikelihood);
+
+          float strikeIntensity = clamp(cloudPlusPrecipDensity / 5.7 + 0.72 + random2d(texCoord), 0.2, 4.0);
+
+          // The sign carries the type: negative is an intra-cloud flash (see the display shader).
+          feedback[INTENSITY] = isCloudToGround > 0.5 ? strikeIntensity : -strikeIntensity;
+
           gl_Position = vec4(vec2(-1. + texelSize.x * 3., -1. + texelSize.y), 0.0, 1.0); // render to bottem left corner (1, 0)
         } else if (realTemp < CtoK(0.0)) {                            // below 0 C
           newMass[WATER] = 0.0;

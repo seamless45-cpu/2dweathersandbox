@@ -52,6 +52,38 @@
       for (let i = 0; i < out.length; i += 4) { if (out[i] > max) max = out[i]; if (out[i] > 0) nonzero++; }
       return { max, nonzero, w, h };
     },
+
+    // full readback of one lightning channel map (for visual debugging of the generator/upload)
+    lightningTexImage(index = 0, channel = 0) {
+      const tex = lightningTextures[index];
+      const w = 512, h = 1024;
+      const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const out = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const si = ((h - 1 - y) * w + x) * 4;
+          const di = (y * w + x) * 4;
+          img.data[di] = out[si + channel];
+          img.data[di + 1] = out[si + channel];
+          img.data[di + 2] = out[si + channel];
+          img.data[di + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return c.toDataURL('image/png');
+    },
     // force a lightning strike into the 1x1 texture: [x, y, startIterNum, intensity]
     writeLightning(x, y, startIterNum, intensity) {
       gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
