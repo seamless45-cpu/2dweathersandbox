@@ -88,16 +88,35 @@ void main()
     wall[DISTANCE] = 255;                                                                                     // reset distance to wall
     base[TEMPERATURE] = getInitialT(int(texCoord.y * (1.0 / texelSize.y)));                                   // set temperature
 
+    // Horizontal structure in the starting field. The buoyancy force in the boundary shader is
+    // the departure of a cell from the initial profile, so a perfectly uniform start is exactly
+    // zero everywhere: no pressure gradient forms, the air never moves, nothing is ever lifted to
+    // its condensation level, and the sky stays empty however long the simulation runs. A patch of
+    // about a Kelvin is enough to break that symmetry and let convection organise itself.
+    float nx = fragCoord.x * 0.010;
+    float ny = fragCoord.y * 0.008;
+    float patchiness = noise(nx + ny + rand(seed) * 10.0)
+                     + 0.55 * noise(nx * 2.7 + ny * 2.1 + rand(seed + 3.0) * 10.0)
+                     + 0.30 * noise(nx * 7.3 + ny * 5.5 + rand(seed + 7.0) * 10.0); // ~ -0.9 .. 0.9
+
+    base[TEMPERATURE] += patchiness * 1.2; // potential temperature perturbation, around one Kelvin
+
     float realTemp = potentialToRealT(base[TEMPERATURE]);
 
-    // No liquid cloud at t=0, and the air starts UN-saturated (below the dew point) so the sky
-    // loads genuinely clear — nothing condenses until real convection lifts the parcel to its
-    // lifting condensation level. A saturated start (1.0) made cloud appear in the first couple
-    // of seconds on load, which read as unexpected cloud forming while the sim was still starting
-    // up. Keep the whole column comfortably below saturation; evaporation + surface heating will
-    // moisten the boundary layer and the storm still builds from convection, just on its own time.
-    float initSaturation = mix(0.45, 0.30, texCoord.y); // slightly moister near the surface, drier aloft
-    water[TOTAL] = maxWater(realTemp) * initSaturation;
+    // Humidity profile: a sub-saturated surface layer (so the sea is not wrapped in fog), a moist
+    // band a few hundred metres up where the cloud bases sit, and drier air aloft. Condensation
+    // only starts above 100 % relative humidity, so the old start - 30 to 45 % saturation from
+    // top to bottom - could not make a cloud at all, no matter how long the simulation ran or how
+    // hard the surface was heated. The horizontal noise lets some columns reach saturation before
+    // their neighbours, which is what breaks the first cloud into cells instead of a flat sheet.
+    float hgt = texCoord.y;
+    float rh = 0.88;
+    rh = mix(rh, 1.02, smoothstep(0.02, 0.14, hgt)); // moistening up to the cloud layer
+    rh = mix(rh, 0.90, smoothstep(0.14, 0.42, hgt)); // cloud layer
+    rh = mix(rh, 0.40, smoothstep(0.45, 0.95, hgt)); // dry air aloft
+    rh += patchiness * 0.12;
+
+    water[TOTAL] = maxWater(realTemp) * clamp(rh, 0.05, 1.02);
 
     // maxWater() is capped and NaN proof, so the initial state is safe from the first
     // condensation boiling the cell and starting a vapor explosion
