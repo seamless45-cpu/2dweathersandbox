@@ -29,6 +29,7 @@ uniform vec2 texelSize;
 uniform float dryLapse;
 
 uniform float iterNum;          // used as seed for random function
+uniform float timeSeconds;      // wall clock, seconds: the flash clock (see realisticDisplay)
 uniform float numDroplets;      // total number of droplets
 uniform float inactiveDroplets; // used to maintain constant spawnrate
 
@@ -144,17 +145,19 @@ void main()
 
         float lightningSpawnChance = max((cloudPlusPrecipDensity - lightningCloudDensityThreshold) * lightningChanceMultiplier, 0.);
 
-        // A flash needs a few iterations to run its course (leader, return stroke, restrikes),
-        // and only the most recent strike is kept, so two strikes may not overlap.
-        const float minIterationsSinceLastLightningBolt = 6.;
+        // Only the most recent strike is kept, so a new one may not start until the previous
+        // flash has finished. That is a duration in seconds, like the flash itself: on the
+        // iteration clock a fast simulation restarted the bolt every couple of frames and the
+        // whole storm flickered.
+        const float lightningCooldownSeconds = 1.40;
 
-        if (lightningData[START_ITERNUM] < iterNum - minIterationsSinceLastLightningBolt &&
+        if (timeSeconds - lightningData[START_ITERNUM] > lightningCooldownSeconds &&
             random2d(vec2(base[TEMPERATURE] * 0.5772, water[TOTAL] * 7.8)) < lightningSpawnChance) { // Spawn lightning
           lightningSpawned = true;
           isActive = false;
           gl_PointSize = 1.0;
           feedback.xy = texCoord;
-          feedback[START_ITERNUM] = iterNum;
+          feedback[START_ITERNUM] = timeSeconds; // the strike clock is the wall clock
 
           // ── cloud-to-ground or intra-cloud? ──
           // Which one a flash turns out to be depends on the charge structure inside the storm,

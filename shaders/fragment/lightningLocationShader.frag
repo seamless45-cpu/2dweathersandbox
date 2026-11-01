@@ -14,6 +14,7 @@ uniform sampler2D precipFeedbackTex;
 uniform vec2 resolution;
 uniform vec2 texelSize;
 uniform float iterNum;
+uniform float timeSeconds; // strike clock, seconds (see realisticDisplayShader.frag)
 
 out vec4 lightningLocation;
 
@@ -29,8 +30,11 @@ void main()
   vec4 newLightningLocation = texelFetch(precipFeedbackTex, ivec2(1, 0), 0); // read pixel 1, 0 where the lightning location was written to by a precipitation particle
 
 
-  // No strike, or two strikes tried to generate during the same iteration, making the number twice as high
-  if (newLightningLocation[START_ITERNUM] < max(iterNum - 1.0, 1.0) || newLightningLocation[START_ITERNUM] > iterNum) {
+  // The record has to be from this iteration: older than that and it is a leftover from an
+  // earlier strike, newer than that and two droplets wrote a strike in the same iteration, which
+  // doubles the stored timestamp and is not a valid record either. The comparison is against the
+  // strike clock in seconds, which is what the precipitation shader writes.
+  if (newLightningLocation[START_ITERNUM] < timeSeconds - 0.05 || newLightningLocation[START_ITERNUM] > timeSeconds + 0.001) {
     discard; // no new lightning strike, so no update
   }
 
