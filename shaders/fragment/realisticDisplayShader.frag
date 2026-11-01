@@ -382,7 +382,7 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float cy = texCoord.y - L.origin.y;
     float nearCloud = exp(-(dx * dx + cy * cy * 1.4) / 0.008);
     float farCloud = exp(-(dx * dx + cy * cy * 2.6) / 0.06);
-    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * (0.15 + 0.85 * cloudCover) * bright;
+    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * smoothstep(0.03, 0.35, cloudCover) * bright;
 
   } else {
     // ─────────────── intra-cloud ───────────────
@@ -454,30 +454,41 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float follow = 0.12 + 2.60 * smoothstep(0.0, 0.16, wideGlow);
 
     // What you see from the ground is the cloud being lit from inside: the deck is the diffuser,
-    // not an obstacle in front of it. So the light has to land on cloud to be seen at all — in
-    // clear air beside the deck there is nothing to light, and without this factor the flash
-    // painted a glowing blob wherever it was put.
+    // not an obstacle in front of it. So the light has to land on cloud to be seen at all.
+    //
+    // This is a gate, not a weight. It used to be `0.10 + 0.90 * cloudCover`, which is never zero:
+    // a flash over clear air — or one whose cell had drifted — painted its crown on the empty sky.
+    // With no cloud at the pixel there is now no light at the pixel, which is also what keeps the
+    // crown inside the cloud it belongs to.
+    float cloudPresence = smoothstep(0.03, 0.35, cloudCover);
     float inCloud = smoothstep(0.10, 0.60, cloudMask);
     // Diffused through cloud the plasma's colour is gone, leaving the blue-violet end.
     vec3 sheetCol = mix(blackbodyRGB(6200.0), vec3(0.50, 0.64, 1.00), 0.45);
 
-    emitted += sheetCol * sheet * mottle * follow * (0.25 + 0.95 * inCloud) * (0.10 + 0.90 * cloudCover) * bright;
+    emitted += sheetCol * sheet * mottle * follow * (0.25 + 0.95 * inCloud) * cloudPresence * bright;
 
     // ── the crown of channels ──
-    // Filaments only show where the base is thin: they are light escaping through the cloud, not
-    // light painted on top of it.
-    float thin = mix(0.35, 1.0, 1.0 - cloudMask);
+    // Channels are light escaping through the deck, so they need cloud *and* a thin base: under a
+    // dense base the same current shows as nothing but the sheet above. They need the presence
+    // gate as well — without it the crown is brightest exactly where there is no cloud to hide
+    // it, which is the opposite of how the light behaves.
+    float thin = cloudPresence * mix(1.0, 0.34, cloudCover);
     // Brightest where the discharge started, fading along the branches: a crown of even
     // brightness reads as a flat cut-out pasted on the sky, which is half of why the old one
     // looked like a drawing rather than like a flash.
     float depth = 1.0 - 0.55 * clamp(radial, 0.0, 1.0);
+    // A second, smaller copy of the network at a different scale stands in for channels at a
+    // different altitude: a real crown is three dimensional, and a single flat copy reads as a
+    // decal no matter how well it is shaded.
+    float farB = textureLod(lightningTex, icSample * 0.78 + vec2(0.11, 0.07), 2.5).b;
     float filament = smoothstep(0.02, 0.30, chB) * depth * grow * window;
+    float farFilament = smoothstep(0.05, 0.36, farB) * 0.30 * depth * grow * window;
     float glow = smoothstep(0.00, 0.30, midGlow) * depth * grow * window;
 
     // White-violet, like the reference: the current-carrying channels run hot enough to read as
     // white, and the light they scatter through the cloud around them is violet-blue.
-    emitted += blackbodyRGB(11000.0) * filament * thin * bright * 6.0;
-    emitted += mix(blackbodyRGB(8000.0), vec3(0.42, 0.42, 1.00), 0.55) * glow * thin * bright * 1.10;
+    emitted += blackbodyRGB(11000.0) * (filament + farFilament) * thin * bright * 9.0;
+    emitted += mix(blackbodyRGB(8000.0), vec3(0.42, 0.42, 1.00), 0.55) * glow * thin * bright * 1.8;
 
   }
 
