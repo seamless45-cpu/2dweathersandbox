@@ -28,6 +28,7 @@ function updateSetupSliders()
 }
 
 var FPS = 60.0;
+var debugFps = false; // log the frame rate readout to the console once a second
 
 
 function mixGeneric(a, b, t, {clamp = false} = {})
@@ -449,8 +450,10 @@ const guiControls_default = {
   SmoothCam : true,
   camSpeed : 0.01,
   exposure : 1.0,
-  bloomStrength : 2.40, // how much of the bright pass is added back over the frame
-  bloomThreshold : 0.55, // linear HDR brightness below which nothing blooms
+  bloomStrength : 1.00, // how much of the bright pass is added back over the frame
+  bloomThreshold : 1.00, // linear HDR brightness below which nothing blooms
+  autoDisplayRes : true,  // trade pixels, not simulation iterations, when the frame rate drops
+  displayResScaleMax : 1.00, // ceiling the automatic resolution controller may climb back to
   displayResScale : 0.72, // internal display resolution (0..1). The scene renders at this fraction
                           // of the window and the single post pass upscales it, cutting fragment
                           // cost while the smooth upscale keeps the visuals intact.
@@ -533,6 +536,7 @@ let simTimeSeconds = 0;    // the flash clock: real time, but frozen whenever th
 let lastFrameWallTime = 0; // performance.now() of the previous frame, in seconds
 let hdrFBO;
 let bloomFBOs = []; // per level: [ ping, pong ]
+let bloomOutputs = []; // the level targets the post pass samples, i.e. where each blur ended
 
 let ambientLightFBOs = [];
 let emittedLightFBO;
@@ -907,14 +911,17 @@ function createHdrFBO() {
 
 let lastLightningStrikeTime = -1; // wall-clock time of the last strike we played thunder for
 
-// Levels of the bloom chain: quarter, eighth and sixteenth of the canvas, two targets each so the
-// blur can ping-pong. The wide end is what makes a flash read as a flash — a glow that reaches
-// across a good part of the sky — and the tight end keeps the light close to the channel from
-// looking like a fog bank. All three are summed in the post pass.
-const BLOOM_LEVELS = [ 2, 6, 16 ]; // canvas is divided by these
+// Levels of the bloom chain: a sixth and a twentieth of the canvas, two targets each so the blur
+// can ping-pong. The tight level keeps the glow on the light that caused it, the wide one is the
+// halo that carries across the sky, and each is one separable Gaussian (see bloomGaussianShader).
+// There used to be three levels blurred with a 4-tap filter applied up to six times; that is
+// where the "the blur costs more than the scene" lag came from, and stacking box filters left a
+// boxy, tiered halo.
+const BLOOM_LEVELS = [ 6, 20 ]; // canvas is divided by these
 
 function createBloomFBOs() {
   bloomFBOs.length = 0;
+  bloomOutputs.length = 0;
   for (const divisor of BLOOM_LEVELS) {
     const w = Math.max(2, Math.round(canvas.width / divisor));
     const h = Math.max(2, Math.round(canvas.height / divisor));
@@ -4183,10 +4190,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
-    display_folder.add(guiControls, 'bloomStrength', 0.0, 6.0, 0.05)
+    display_folder.add(guiControls, 'bloomStrength', 0.0, 3.0, 0.05)
       .name('Lightning Bloom');
 
-    display_folder.add(guiControls, 'bloomThreshold', 0.05, 4.0, 0.05)
+    display_folder.add(guiControls, 'bloomThreshold', 0.2, 4.0, 0.05)
       .name('Bloom Threshold');
 
     display_folder.add(guiControls, 'displayResScale', 0.40, 2.0, 0.02)
@@ -4195,6 +4202,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         createBloomFBOs();
       })
       .name('Display Resolution');
+
+    display_folder.add(guiControls, 'autoDisplayRes')
+      .name('Auto Resolution'); // trade pixels, not simulation steps, when the machine cannot keep up
 
     display_folder.add(guiControls, 'camSpeed', 0.001, 0.050, 0.001).name('Camera Pan Speed');
 
@@ -5162,6 +5172,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const lightBlurShader = await loadShader('bloomBlurShader.frag');
 
   const bloomExtractShader = await loadShader('bloomExtractShader.frag');
+  const bloomGaussianShader = await loadShader('bloomGaussianShader.frag');
 
 
   // create programs
@@ -5190,6 +5201,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const postProcessingProgram = createProgram(postProcessingVertexShader, postProcessingShader);
   const lightBlurProgram = createProgram(postProcessingVertexShader, lightBlurShader);
   const bloomExtractProgram = createProgram(postProcessingVertexShader, bloomExtractShader);
+  const bloomGaussianProgram = createProgram(postProcessingVertexShader, bloomGaussianShader);
 
 
   await loadingBar.set(80, 'Setting up textures');
@@ -6232,7 +6244,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'hdrTex'), 0);
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex'), 11);
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex2'), 12);
-  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex3'), 13);
   gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'bloomStrength'), guiControls.bloomStrength);
 
   gl.useProgram(lightningLocationProgram);
@@ -6890,19 +6901,20 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.disable(gl.BLEND);
 
       // ── screen bloom ─────────────────────────────────────────────────────────────────────
-      // Bright pass at a quarter of the canvas, then a three-level progressive blur: each level
-      // downsamples the one before it and is blurred twice in place, so the widest glow costs a
-      // handful of passes over a 60x34 target. This is what makes a flash read as a flash — the
-      // bolt itself is a hairline, and nearly everything the eye sees of it is light scattered
-      // off the air, the cloud and the camera lens.
+      // Bright pass at a quarter of the canvas, then one separable Gaussian per level: blur
+      // across, blur down, downsample into the next level, blur again. Two levels, six passes
+      // over targets that are a sixteenth and a two-hundredth of the frame, which is a small
+      // fraction of the cost of what it replaced and is what makes a flash read as a flash — a
+      // bolt is a hairline, and nearly everything the eye sees of it is light scattered off the
+      // air, the cloud and the camera lens.
       //
-      // The kernels stay at one or two texels per pass on purpose. Few taps over a large radius
-      // (a single pass sampling twelve texels out) does not blur a thin bright line, it stamps
-      // copies of it, which shows up as hard banding either side of the bolt.
-      {
+      // The chain is skipped entirely when the strength is zero, which is the difference between
+      // "bloom off" costing nothing and it costing six full-screen passes for an invisible
+      // result.
+      if (!SETUP_MODE && guiControls.bloomStrength > 0.005) {
         gl.bindVertexArray(postProcessingVao);
 
-        // 1. bright pass into the quarter-resolution level
+        // 1. bright pass into the first level
         const level0 = bloomFBOs[0];
         gl.bindFramebuffer(gl.FRAMEBUFFER, level0[0].frameBuffer);
         gl.viewport(0, 0, level0[0].width, level0[0].height);
@@ -6914,36 +6926,36 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.uniform1f(gl.getUniformLocation(bloomExtractProgram, 'knee'), 0.6);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-        gl.useProgram(lightBlurProgram);
-        gl.uniform1i(gl.getUniformLocation(lightBlurProgram, 'inputTexture'), 0);
+        gl.useProgram(bloomGaussianProgram);
+        gl.uniform1i(gl.getUniformLocation(bloomGaussianProgram, 'inputTexture'), 0);
         gl.activeTexture(gl.TEXTURE0);
 
-        const blur = (from, to, radius) => {
+        // One Gaussian along one axis. `radius` is in texels of the target, so the same call
+        // widens the glow as the target gets smaller.
+        const blurAxis = (from, to, dx, dy, radius) => {
           gl.bindFramebuffer(gl.FRAMEBUFFER, to.frameBuffer);
           gl.viewport(0, 0, to.width, to.height);
           gl.bindTexture(gl.TEXTURE_2D, from.texture);
-          // texelSize drives the tap offsets in both the vertex shader and the fragment shader,
-          // so scaling it widens the kernel without touching the shader itself
-          gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), radius / to.width, radius / to.height);
+          gl.uniform2f(gl.getUniformLocation(bloomGaussianProgram, 'direction'), dx * radius / to.width, dy * radius / to.height);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         };
+        const blurBoth = (from, to, radius) => {
+          blurAxis(from, to, 1.0, 0.0, radius);
+          blurAxis(to, from, 0.0, 1.0, radius);
+        };
 
-        // 2. blur each level in place, then copy it down into the next, coarser one. The widest
-        // level gets an extra pair of passes: it is the one that decides how far the glow reaches.
-        for (let level = 0; level < bloomFBOs.length; level++) {
-          const [ a, b ] = bloomFBOs[level];
-          // More passes the coarser the level: a handful of taps at a large radius does not blur,
-          // it puts copies of the source down next to each other, and upsampled from a target
-          // this small that reads as a boxy halo with hard edges.
-          const passes = 1 + level;
+        // 2. blur the first level in place (across, then down), then carry it into the second
+        // level, which is blurred the same way. The targets the post pass reads are whichever
+        // ones the last pass of each level landed in — with a ping-pong chain that is not simply
+        // the first target, and getting it wrong silently shows an unblurred (or stale) level.
+        blurBoth(level0[0], level0[1], 2.0);
+        bloomOutputs[0] = level0[0]; // blurBoth ends back in `from`
 
-          for (let i = 0; i < passes; i++) {
-            blur(a, b, 1.0);
-            blur(b, a, 1.6);
-          }
-
-          if (level + 1 < bloomFBOs.length)
-            blur(a, bloomFBOs[level + 1][0], 1.0); // downsample into the next level
+        if (bloomFBOs.length > 1) {
+          const [ wideA, wideB ] = bloomFBOs[1];
+          blurAxis(level0[0], wideA, 1.0, 0.0, 2.0); // downsample + blur across
+          blurAxis(wideA, wideB, 0.0, 1.0, 2.0);     // and blur down
+          bloomOutputs[1] = wideB;
         }
       }
 
@@ -6955,9 +6967,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.useProgram(postProcessingProgram);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-      for (let level = 0; level < bloomFBOs.length; level++) {
+      for (let level = 0; level < bloomOutputs.length; level++) {
         gl.activeTexture(gl.TEXTURE11 + level);
-        gl.bindTexture(gl.TEXTURE_2D, bloomFBOs[level][0].texture);
+        gl.bindTexture(gl.TEXTURE_2D, bloomOutputs[level].texture);
       }
 
       gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'bloomStrength'), SETUP_MODE ? 0.0 : guiControls.bloomStrength);
@@ -7407,6 +7419,50 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function adjIterPerFrame(adj) { guiControls.IterPerFrame = Math.round(clamp(guiControls.IterPerFrame + adj, 1, 50)); }
 
+  // ── automatic display resolution ────────────────────────────────────────────────────────────
+  // The iteration controller above keeps the frame rate by running fewer simulation steps, which
+  // is why a machine that cannot keep up shows a *slow motion* storm: the picture is smooth and
+  // the weather crawls. The scene shaders are what cost the time, though, not the time steps, so
+  // the first thing to give up should be pixels: the display renders at a fraction of the window
+  // and is upscaled, which is far less noticeable than a storm running at a fifth of its speed.
+  //
+  // The controller is deliberately slow and hysteretic: one step every couple of seconds, and it
+  // only moves when the frame rate is clearly outside the band. Oscillating between two
+  // resolutions would be worse than either of them.
+  let lastAutoResTime = 0;
+  function adaptDisplayRes()
+  {
+    if (!guiControls.autoDisplayRes || SETUP_MODE || guiControls.paused)
+      return;
+
+    // Once every two seconds, on the clock rather than on a frame count: on the machines that
+    // need this the frame rate is exactly what is low, and counting frames made the controller
+    // wait over a minute before its first step.
+    const now = performance.now();
+    if (now - lastAutoResTime < 2000)
+      return;
+    lastAutoResTime = now;
+
+    const maxScale = clamp(guiControls.displayResScaleMax, 0.4, 2.0);
+    let next = guiControls.displayResScale;
+
+    if (FPS < 25)
+      next -= 0.15; // badly behind: one bigger step, then it settles
+    else if (FPS < 40)
+      next -= 0.08;
+    else if (FPS > 55 && guiControls.displayResScale < maxScale)
+      next += 0.04;
+
+    next = clamp(next, 0.40, maxScale);
+
+    // Only act on a real change: rebuilding these targets drops the frame it happens on.
+    if (Math.abs(next - guiControls.displayResScale) > 0.045) {
+      guiControls.displayResScale = Math.round(next * 100) / 100;
+      createHdrFBO();
+      createBloomFBOs();
+    }
+  }
+
   function isPageHidden() { return document.hidden || document.msHidden || document.webkitHidden || document.mozHidden; }
 
   function calcFps()
@@ -7417,14 +7473,29 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
 
       if (!guiControls.paused) {
-        console.log(FPS + ' FPS   ' + guiControls.IterPerFrame + ' Iterations / frame      ' + FPS * guiControls.IterPerFrame + ' Iterations / second');
+        // The frame readout used to go to the console once a second, which is 3600 log lines an
+        // hour of string building for something nobody reads. It is behind a flag now.
+        if (debugFps)
+          console.log(FPS + ' FPS   ' + guiControls.IterPerFrame + ' Iterations / frame      ' + FPS * guiControls.IterPerFrame + ' Iterations / second');
+
+        // Pixels first, then time steps: see adaptDisplayRes.
+        adaptDisplayRes();
 
         if (guiControls.auto_IterPerFrame && !airplaneMode) {
           const fpsTarget = 60;
-          adjIterPerFrame((FPS / fpsTarget - 1.0) * 5.0); // example: ((30 / 60)-1.0) = -0.5
-
-          if (FPS == fpsTarget)
-            adjIterPerFrame(1);
+          // Only start eating iterations once the resolution cannot go any lower, otherwise the
+          // two controllers fight each other and the storm runs in slow motion on a machine that
+          // could have kept its speed at a slightly lower resolution.
+          const resCanHelp = guiControls.autoDisplayRes && guiControls.displayResScale > 0.44;
+          if (!resCanHelp) {
+            // One step at a time, and only when the frame rate is clearly outside the band. The
+            // old proportional term asked for a five step cut at 30 fps, which is a cliff: the
+            // storm slowed down by a factor of five before the next measurement could react.
+            if (FPS < 24)
+              adjIterPerFrame(-1);
+            else if (FPS > 45)
+              adjIterPerFrame(1);
+          }
         }
       }
       // calculate total amounts of water and smoke for verification of fluid simulation
