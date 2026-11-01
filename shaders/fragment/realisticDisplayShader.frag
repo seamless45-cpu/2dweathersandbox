@@ -337,16 +337,17 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float core = smoothstep(0.02, 0.55, ch.r);
     float sheath = smoothstep(0.03, 0.50, ch.g);
 
-    // Colour from temperature. The current-carrying core of a return stroke is a plasma at
-    // 20 000-30 000 K, which is blue-white; the sheath and the branches carry less current and
-    // are cooler, and the light scattered off the air around the channel comes off cooler still.
-    // Deriving the colour from the temperature rather than picking an RGB triple is what puts
-    // the white-hot core inside a violet-blue fringe, which is how a real bolt photographs.
-    vec3 colCore = blackbodyRGB(mix(12000.0, 30000.0, core));
-    vec3 colSheath = blackbodyRGB(mix(7000.0, 15000.0, sheath));
-    vec3 colLeader = blackbodyRGB(9000.0);
-    vec3 colHalo = blackbodyRGB(7500.0);
-    vec3 colGround = blackbodyRGB(12000.0);
+    // Colour from the plasma, not from an RGB triple (see lightningPlasma in commonDisplay):
+    // the current-carrying core is tens of thousands of kelvin and dominated by its continuum,
+    // so it is blue-white; the sheath and the branches carry less current and are cooler, so
+    // their line emission takes over and they go violet; the halo is that light scattered by the
+    // air and is bluer still. That is the white core, violet fringe and blue halo a bolt
+    // photographs with.
+    vec3 colCore = lightningPlasma(mix(12000.0, 30000.0, core), 0.06 + 0.14 * (1.0 - core));
+    vec3 colSheath = lightningPlasma(mix(8000.0, 16000.0, sheath), 0.55);
+    vec3 colLeader = lightningPlasma(9000.0, 0.85);
+    vec3 colHalo = lightningAirGlow(8000.0);
+    vec3 colGround = lightningPlasma(12000.0, 0.25);
 
     // The return stroke is blinding, the leader is a faint violet thread, and the branches are
     // dimmer and cooler than the trunk because less current reaches them.
@@ -382,7 +383,9 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float cy = texCoord.y - L.origin.y;
     float nearCloud = exp(-(dx * dx + cy * cy * 1.4) / 0.008);
     float farCloud = exp(-(dx * dx + cy * cy * 2.6) / 0.06);
-    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * bright;
+    // Light inside the cloud: the channel's light diffused through water droplets, so the line
+    // emission dominates and the deck glows blue-violet, never white.
+    emitted += lightningPlasma(7000.0, 0.75) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * bright;
 
   } else {
     // ─────────────── intra-cloud ───────────────
@@ -394,7 +397,7 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float sheet = exp(-(dx * dx + cy * cy * 1.8) / 0.045) * 1.5 + exp(-(dx * dx + cy * cy * 2.4) / 0.16) * 0.35;
     // Light diffused through a kilometre of cloud has lost the colour of the plasma: it comes
     // out as the cooler end of the range, which is why an IC flash reads blue, not white.
-    emitted += blackbodyRGB(6500.0) * sheet * cloudMask * bright;
+    emitted += lightningPlasma(6500.0, 0.85) * sheet * cloudMask * bright;
 
     // Crawlers grow outward from the discharge point as the flash develops. They may only be
     // drawn inside the texture: outside it the sampler clamps to the edge column and a single
@@ -417,8 +420,8 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     // Seen through the cloud base, so it is dim and blue rather than a white channel, and it
     // sits inside a soft haze of its own scattered light.
     float haze = smoothstep(0.0, 0.45, ch.b) * growth * inside;
-    emitted += blackbodyRGB(9000.0) * filament * bright * 1.4;
-    emitted += blackbodyRGB(7000.0) * haze * bright * 0.22;
+    emitted += lightningPlasma(9000.0, 0.75) * filament * bright * 1.4;
+    emitted += lightningAirGlow(7000.0) * haze * bright * 0.22;
 
   }
 
@@ -440,7 +443,10 @@ vec3 lightningSceneLight(Lightning L, float bright)
   // A flash is a long source, not a point: an inverse square from a point puts all of its
   // light on a couple of pixels and leaves the rest of the scene black. The falloff below is
   // gentle close in and reaches much further out.
-  vec3 tint = L.ic > 0.5 ? vec3(0.70, 0.78, 1.00) : vec3(0.76, 0.84, 1.00);
+  // The light a flash throws on its surroundings is the same plasma colour as the channel: a CG
+  // bolt lights the landscape blue-white, an IC flash buried in the deck lights it the blue of
+  // light that has crossed a kilometre of cloud.
+  vec3 tint = L.ic > 0.5 ? lightningPlasma(7000.0, 0.70) : lightningPlasma(8000.0, 0.55);
   float scale = L.ic > 0.5 ? 0.012 : 0.030;
   return tint * (scale / (d2 + 0.02)) * bright;
 }
