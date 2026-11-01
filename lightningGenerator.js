@@ -408,94 +408,130 @@
   {
     const crawlers = [];
 
-    // The whole network lives in a shallow band near the top of the map, because that is where
-    // the shader looks for it: it is mapped onto a sheet a few hundred metres thick, not onto
-    // the full height of the flash. Anything drawn below bandBottom would be projected into the
-    // air under the cloud and read as a channel hanging in mid air.
-    const bandY = h * 0.10;      // centre of the charge layer
-    const bandTop = h * 0.02;
-    const bandBottom = h * 0.22;
+    // The network is drawn into a band near the top of the map, because that is where the shader
+    // looks for it: it is mapped onto a sheet a few hundred metres thick, not onto the full height
+    // of the flash. The band is wider than it needs to be on screen on purpose — the display
+    // squashes it about four to one to get the flat, layered look of a real discharge, so the map
+    // has to carry vertical detail for it to have anything to squash.
+    const bandY = h * 0.26;         // centre of the charge layer
+    const bandTop = h * 0.04;
+    const bandBottom = h * 0.50;
 
-    // Growth meanders are steered back into the band and away from the frame edges. A discharge
-    // layer is horizontal, so the correction on the vertical offset is much stronger than the
-    // one on the horizontal: filaments must not wander out of the layer, but they are free to
-    // run a long way sideways.
+    // Steering pulls the path back into the layer and away from the edges. The vertical term is
+    // the weak one: a real in-cloud channel meanders freely inside the layer, and forcing it to
+    // the centre line is what made every filament a straight horizontal rule.
     function steerBand(off, x, y, axis)
     {
-      // Which way is "up" depends on which way the lane is running. `grow` measures the heading
-      // from straight down and turns it by adding to the offset, so a positive offset lifts a
-      // lane that runs right but drops a lane that runs left. Steering that ignores this pushes
-      // a lane that has drifted out of the layer further out: one wrong sign and the "horizontal
-      // crawler" climbed straight up the map and then down into the air below the cloud.
+      // Which way is "up" depends on which way the lane runs. `grow` turns the heading by adding
+      // to the offset, so a positive offset lifts a lane that runs right but drops a lane that
+      // runs left; steering that ignores this pushes a lane that has drifted out of the layer
+      // further out.
       const sgn = Math.sin(axis) >= 0 ? 1 : -1;
-      const dyBand = y - bandY;
-      const k = dyBand > 0 ? 0.055 : 0.030; // climbing back out of the base is the urgent case
-      return off + sgn * dyBand * k;
+      const over = y > bandBottom ? y - bandBottom : y < bandTop ? y - bandTop : 0;
+      const edge = w * 0.07;
+      let o = off + sgn * over * 0.05;
+      if (x < edge)
+        o += (1 - x / edge) * 0.6;
+      if (x > w - edge)
+        o -= (1 - (w - x) / edge) * 0.6;
+      return o;
     }
 
-    const band = {
+    const bounds = {
       x0 : 0,
       x1 : w,
       y0 : bandTop,
       y1 : bandBottom,
     };
 
-    // Spokes of the spider, radiating sideways from the middle of the layer. `grow` measures an
-    // angle from straight down, so ±PI/2 is horizontal; the jitter around it gives the network
-    // its fan shape without ever sending a lane off toward the ground.
-    const spokes = 7 + Math.floor(rng() * 5);
-    for (let l = 0; l < spokes; l++) {
-      const dir = l % 2 === 0 ? 1 : -1;
-      const fan = (rng() - 0.5) * 0.9;
-      const lane = grow(rng, {
-        x : w * 0.5 + (rng() - 0.5) * w * 0.10,
-        y : bandY + (rng() - 0.5) * h * 0.035,
-        angle : dir * Math.PI * 0.5 + fan,
-        length : w * (0.16 + rng() * 0.28),
-        wTop : 1.8 + rng() * 0.7,
-        wBot : 0.9,
-        taperPow : 0.8,
-        segLen : h / 70,
-        kink : 0.7,
-        zigzag : 0.72,
-        spring : 0.16,
-        micro : 0.05,
-        sub : 2,
-        axisDrift : 0.05,
-        wander : 0.02,
+    // Settings shared by every segment of the network. The jitter is deliberately large: `kink`
+    // sets how far each leg swings off the axis and `wander` how fast the axis itself turns, so a
+    // filament crosses the layer several times over its length instead of running along it.
+    function channel(len, width, angle)
+    {
+      return {
+        angle : angle,
+        length : len,
+        // Strokes are deliberately fat. The display reads this map about two and a half to one
+        // smaller vertically than horizontally, so a one pixel filament averages down to a third
+        // of its coverage and the network dissolves into speckle. Three to five pixels wide in
+        // the map survives that and lands as a thin bright line on screen.
+        wTop : width,
+        wBot : Math.max(0.7, width * 0.30),
+        taperPow : 0.75,
+        segLen : h / 150,
+        // `hold` gives the angular geometry real channels have: a long straight run, a sharp
+        // turn, another run. Smooth meandering (spring damping) is what made these read as soft
+        // wavy lines rather than as lightning.
+        hold : true,
+        kink : 0.85,
+        zigzag : 0.55,
+        micro : 0.02,
+        sub : 3,
+        axisDrift : 0.010,
+        wander : 0.030,
         steer : steerBand,
-        bounds : band,
-      });
-      crawlers.push({pts : lane, alpha : 0.7 + rng() * 0.3});
+        bounds : bounds,
+      };
+    }
 
-      // Forks off the lane. Most stay in the layer and spread sideways like the rest of the
-      // network; every third one is a "leg" that dips out of the base, which is the detail that
-      // makes spider lightning look like it is hanging under the cloud rather than drawn on it.
-      const skip = Math.max(3, Math.round(lane.length / 9));
-      for (let i = skip; i < lane.length - 1; i += skip) {
-        const s = lane[i];
-        const droop = rng() < 0.34;
-        const sub = grow(rng, {
-          x : s.x,
-          y : s.y,
-          angle : droop ? Math.PI + (rng() - 0.5) * 0.35 // a short leg out of the base
-                        : (rng() < 0.5 ? -1 : 1) * (Math.PI * 0.30 + rng() * 0.55),
-          length : h * (droop ? 0.02 + rng() * 0.07 : 0.02 + rng() * 0.07),
-          wTop : 1.0 + rng() * 0.5,
-          wBot : 0.5,
-          taperPow : 0.9,
-          segLen : h / 90,
-          kink : 0.8,
-          zigzag : 0.66,
-          spring : 0.18,
-          micro : 0.05,
-          sub : 2,
-          wander : 0.02,
-          bounds : band,
-        });
-        crawlers.push({pts : sub, alpha : 0.32 + rng() * 0.34});
+    // One channel plus its sub-branches, recursively. Real intra-cloud flashes are trees: a
+    // handful of trunk channels radiating through the layer, each throwing off forks, each fork
+    // throwing off its own. Two levels of recursion is what turns a few smooth strokes into a
+    // network — the tips are thinner, shorter and dimmer, so the eye reads depth in it.
+    function branch(x, y, angle, len, width, depth, alpha)
+    {
+      const o = channel(len, width, angle);
+      o.x = x;
+      o.y = y;
+      const pts = grow(rng, o);
+      if (pts.length < 2)
+        return;
+
+      crawlers.push({pts : pts, alpha : alpha});
+
+      if (depth <= 0 || pts.length < 4)
+        return;
+
+      const forks = 2 + Math.floor(rng() * 3);
+      for (let f = 0; f < forks; f++) {
+        // A fork leaves from somewhere along the parent, not always from its middle, and turns
+        // by a wide angle: real branches split at 30 to 80 degrees, not a few degrees.
+        const at = 0.25 + rng() * 0.7;
+        const s = pts[Math.min(pts.length - 1, Math.floor(at * pts.length))];
+        const turn = (rng() < 0.5 ? -1 : 1) * (0.5 + rng() * 0.95);
+        branch(s.nx, s.ny, angle + turn,
+               len * (0.30 + rng() * 0.30),
+               Math.max(0.8, width * (0.45 + rng() * 0.20)),
+               depth - 1,
+               alpha * (0.55 + rng() * 0.35));
       }
     }
+
+    // Trunks radiate from a common region, which is what makes spider lightning look like a crown
+    // rather than like a set of parallel scratches.
+    const trunks = 10 + Math.floor(rng() * 5);
+    for (let t = 0; t < trunks; t++) {
+      const dir = t % 2 === 0 ? 1 : -1;
+      const spread = (rng() - 0.5) * 1.30; // up to ~37 degrees off horizontal
+      const x = w * 0.5 + (rng() - 0.5) * w * 0.30;
+      const y = bandY + (rng() - 0.5) * h * 0.26;
+      branch(x, y, dir * Math.PI * 0.5 + spread,
+             w * (0.12 + rng() * 0.26),
+             2.6 + rng() * 1.2,
+             2,
+             0.8 + rng() * 0.2);
+    }
+
+    // A few shorter channels tying the crown together, so it reads as one network rather than as
+    // separate flashes that happen to be next to each other.
+    for (let b = 0; b < 6; b++)
+      branch(w * (0.15 + rng() * 0.7), bandY + (rng() - 0.5) * h * 0.30,
+             (rng() < 0.5 ? -1 : 1) * (0.2 + rng() * 1.1),
+             w * (0.08 + rng() * 0.16),
+             1.5 + rng() * 0.8,
+             1,
+             0.40 + rng() * 0.35);
 
     return {crawlers : crawlers};
   }
