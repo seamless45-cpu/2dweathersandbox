@@ -50,6 +50,36 @@ vec3 blackbodyRGB(float kelvin)
   return c / max(max(c.r, c.g), max(c.b, 1e-4));
 }
 
+// ── lightning plasma colour ─────────────────────────────────────────────────────────────────
+// A lightning channel is not a black body seen through a spectrograph. It is an optically thin
+// plasma, so on top of the hot continuum its line emission decides the colour, and in the
+// visible that means the N2 second positive system and the N2+ first negative system in the
+// violet and blue, with a weaker red contribution from atomic oxygen and hydrogen. That is why
+// a bolt photographs as a white-hot core inside a violet-blue fringe, why its halo is blue, and
+// why the cloud it lights glows blue rather than white.
+//
+// `lines` is how much of the light comes from line emission instead of the continuum: near zero
+// for the current-carrying core, which is tens of thousands of kelvin and continuum dominated,
+// rising towards one in the cooler outer plasma and in light diffused through a kilometre of
+// cloud. Temperature still drives the hue, the way it does for everything else that glows; the
+// second argument only says how far the plasma has cooled out of the continuum regime.
+vec3 lightningPlasma(float kelvin, float lines)
+{
+  // Violet-blue line mix, in the same peak-normalised linear space as blackbodyRGB.
+  const vec3 lineCol = vec3(0.27, 0.14, 1.00);
+  vec3 c = mix(blackbodyRGB(kelvin), lineCol, clamp(lines, 0.0, 1.0) * 0.70);
+  return c / max(max(c.r, c.g), max(c.b, 1e-4));
+}
+
+// The colour of a flash seen *in the air around it*: the light of the channel scattered by the
+// atmosphere, which is strongly blue weighted because Rayleigh scattering goes as 1/wavelength^4.
+// This is the halo and the haze, and it is bluer than the plasma it comes from.
+vec3 lightningAirGlow(float kelvin)
+{
+  vec3 c = lightningPlasma(kelvin, 0.90) * vec3(0.55, 0.80, 1.00);
+  return c / max(max(c.r, c.g), max(c.b, 1e-4));
+}
+
 // ── air temperature colour ──────────────────────────────────────────────────────────────────
 // The temperature view is a false-colour map computed from the absolute temperature in kelvin,
 // not a palette index into an image. Two things make air temperature different from the glowing
