@@ -54,6 +54,72 @@
       return { max, nonzero, w, h };
     },
 
+    // read a bloom level back as a PNG (for debugging the glow chain)
+    bloomDump(level = 0, scale = 8) {
+      const fbo = bloomOutputs[level];
+      if (!fbo) return null;
+      const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fbo.texture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const w = fbo.width, h = fbo.height;
+      const out = new Float32Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      const c = document.createElement('canvas');
+      c.width = w * scale; c.height = h * scale;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(w, h);
+      let mx = 0;
+      for (let i = 0; i < w * h; i++)
+        mx = Math.max(mx, out[i * 4], out[i * 4 + 1], out[i * 4 + 2]);
+      const k = mx > 0 ? 1 / mx : 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const si = ((h - 1 - y) * w + x) * 4;
+          const di = (y * w + x) * 4;
+          img.data[di] = Math.min(255, out[si] * k * 255);
+          img.data[di + 1] = Math.min(255, out[si + 1] * k * 255);
+          img.data[di + 2] = Math.min(255, out[si + 2] * k * 255);
+          img.data[di + 3] = 255;
+        }
+      }
+      const small = document.createElement('canvas');
+      small.width = w; small.height = h;
+      small.getContext('2d').putImageData(img, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(small, 0, 0, w * scale, h * scale);
+      return { url : c.toDataURL('image/png'), w, h, max : mx };
+    },
+
+    // raw float rows of a bloom level, for diagnosing the glow chain numerically
+    bloomRows(level = 0, ys = []) {
+      const fbo = bloomOutputs[level];
+      if (!fbo) return null;
+      const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+      const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      if (!this._fbo) this._fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fbo.texture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      const w = fbo.width, h = fbo.height;
+      const out = new Float32Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, out);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      const res = { w, h, rows : {} };
+      for (const y of ys) {
+        const row = [];
+        for (let x = 0; x < w; x++)
+          row.push(Math.round(out[(y * w + x) * 4] * 1000) / 1000);
+        res.rows[y] = row;
+      }
+      return res;
+    },
+
     // full readback of one lightning channel map (for visual debugging of the generator/upload)
     lightningTexImage(index = 0, channel = 0) {
       const tex = lightningTextures[index];

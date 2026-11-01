@@ -450,7 +450,11 @@ const guiControls_default = {
   SmoothCam : true,
   camSpeed : 0.01,
   exposure : 1.0,
-  bloomStrength : 1.00, // how much of the bright pass is added back over the frame
+  // Both bloom numbers are fixed rather than exposed as sliders: the threshold only decides which
+  // part of the frame is bright enough to glow, and leaving it adjustable mostly meant the glow
+  // could be switched off by accident. The strength is the lightning brightness — it is set where
+  // the bolt reads correctly against the post pass and does not need a control.
+  bloomStrength : 7.25, // how much of the bright pass is added back over the frame
   bloomThreshold : 1.00, // linear HDR brightness below which nothing blooms
   autoDisplayRes : true,  // trade pixels, not simulation iterations, when the frame rate drops
   displayResScaleMax : 1.00, // ceiling the automatic resolution controller may climb back to
@@ -4190,12 +4194,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
-    display_folder.add(guiControls, 'bloomStrength', 0.0, 3.0, 0.05)
-      .name('Lightning Bloom');
-
-    display_folder.add(guiControls, 'bloomThreshold', 0.2, 4.0, 0.05)
-      .name('Bloom Threshold');
-
     display_folder.add(guiControls, 'displayResScale', 0.40, 2.0, 0.02)
       .onChange(function() {
         createHdrFBO(); // rebuild the HDR buffer at the new internal resolution
@@ -6922,6 +6920,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
         gl.uniform2f(gl.getUniformLocation(bloomExtractProgram, 'texelSize'), 1.0 / hdrFBO.width, 1.0 / hdrFBO.height);
+        // one texel of the target, in uv: the bright pass has to average over this much of the
+        // source or it point-samples a hairline channel into a dashed grid
+        gl.uniform2f(gl.getUniformLocation(bloomExtractProgram, 'footprint'), 1.0 / level0[0].width, 1.0 / level0[0].height);
         gl.uniform1f(gl.getUniformLocation(bloomExtractProgram, 'threshold'), guiControls.bloomThreshold);
         gl.uniform1f(gl.getUniformLocation(bloomExtractProgram, 'knee'), 0.6);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -6948,13 +6949,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         // level, which is blurred the same way. The targets the post pass reads are whichever
         // ones the last pass of each level landed in — with a ping-pong chain that is not simply
         // the first target, and getting it wrong silently shows an unblurred (or stale) level.
-        blurBoth(level0[0], level0[1], 2.0);
+        //
+        // The radius is 1.0: one texel per tap. Asking for two left every other column of the
+        // glow empty, which is the grid that used to sit around a bolt at high bloom strength.
+        blurBoth(level0[0], level0[1], 1.0);
         bloomOutputs[0] = level0[0]; // blurBoth ends back in `from`
 
         if (bloomFBOs.length > 1) {
           const [ wideA, wideB ] = bloomFBOs[1];
-          blurAxis(level0[0], wideA, 1.0, 0.0, 2.0); // downsample + blur across
-          blurAxis(wideA, wideB, 0.0, 1.0, 2.0);     // and blur down
+          blurAxis(level0[0], wideA, 1.0, 0.0, 1.0); // downsample + blur across
+          blurAxis(wideA, wideB, 0.0, 1.0, 1.0);     // and blur down
           bloomOutputs[1] = wideB;
         }
       }
