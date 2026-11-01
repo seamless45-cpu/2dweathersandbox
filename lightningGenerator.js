@@ -146,6 +146,46 @@
     g.globalAlpha = 1;
   }
 
+  // A channel has to reach the ground. `grow` measures its length along the path it walks, and a
+  // bolt that wanders sideways covers less vertical distance than it travels: a trunk drawn for a
+  // length of 1.08 h could stop a tenth of the way above the surface, which is exactly what a
+  // strike that "stops in mid air" is. Carry the last leg on, mostly downwards, until it has
+  // crossed the bottom edge of the map. Anything drawn past the edge is clipped by the canvas, so
+  // this cannot make a bolt longer than the map.
+  function extendToGround(pts, h)
+  {
+    if (!pts.length)
+      return pts;
+
+    const last = pts[pts.length - 1];
+    if (last.ny >= h)
+      return pts;
+
+    let x = last.nx, y = last.ny;
+    let dx = last.nx - last.x, dy = last.ny - last.y;
+    const len = Math.hypot(dx, dy) || 1;
+
+    // Keep a little of the last leg's sideways drift so the join is not a visible corner, but
+    // make sure the channel descends: a segment that was heading up would otherwise never reach
+    // the edge.
+    dx = (dx / len) * 0.35;
+    dy = Math.max(Math.abs(dy / len), 0.6);
+    const norm = Math.hypot(dx, dy);
+    dx /= norm;
+    dy /= norm;
+
+    const step = Math.max(h / 60, 6);
+    let guard = 400;
+    while (y < h + step && guard-- > 0) {
+      const nx = x + dx * step, ny = y + dy * step;
+      pts.push({ x, y, nx, ny, w : last.w, t : last.t, a : last.a });
+      x = nx;
+      y = ny;
+    }
+
+    return pts;
+  }
+
   /* ─────────────────────── cloud-to-ground flash ─────────────────────── */
 
   function generateCG(rng, w, h)
@@ -193,7 +233,7 @@
         y1 : h,
       },
     }));
-    trunk.push({pts : main, alpha : 1});
+    trunk.push({pts : extendToGround(main, h), alpha : 1});
 
     // ── major forks: a CG channel usually splits once (sometimes twice) before it reaches the
     // ground. The fork leaves the trunk high up and diverges slowly, so the classic "Y" still

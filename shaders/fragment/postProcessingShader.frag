@@ -16,9 +16,8 @@ uniform vec2 texelSize;
 uniform float exposure;
 
 uniform sampler2D hdrTex;
-uniform sampler2D bloomTex;  // tight glow  (quarter resolution)
-uniform sampler2D bloomTex2; // medium      (eighth)
-uniform sampler2D bloomTex3; // wide halo   (sixteenth)
+uniform sampler2D bloomTex;  // tight glow (quarter resolution)
+uniform sampler2D bloomTex2; // wide halo  (sixteenth)
 uniform float bloomStrength;
 out vec4 fragmentColor;
 
@@ -62,12 +61,13 @@ void main()
   // image out.
   vec3 outputCol = texture(hdrTex, texCoord).rgb;
 
-  // Three levels of glow, summed with falling weights: the tight one keeps the light on the
-  // channel, the wide one is the halo that carries across the sky. Sampling the coarse levels
-  // with the bilinear filter smooths them for free.
-  vec3 bloom = texture(bloomTex, texCoord).rgb * 0.55
-             + texture(bloomTex2, texCoord).rgb * 0.55
-             + texture(bloomTex3, texCoord).rgb * 0.60;
+  // Two levels of glow, weighted so they cannot push the sum above one: the tight one keeps the
+  // light on the channel, the wide one is the halo that carries across the sky. Three levels
+  // each weighted ~0.55 and multiplied by a strength of 2.4 added up to four times the blurred
+  // energy, which is why the glow read as a fog bank pasted over the frame rather than as light
+  // coming off the bolt. Sampling the coarse level with the bilinear filter smooths it for free.
+  vec3 bloom = texture(bloomTex, texCoord).rgb * 0.62
+             + texture(bloomTex2, texCoord).rgb * 0.38;
   outputCol += bloom * bloomStrength;
 
   outputCol *= exposure;

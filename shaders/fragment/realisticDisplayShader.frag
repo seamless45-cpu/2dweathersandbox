@@ -467,6 +467,40 @@ vec3 spectral_zucconi(float w)
 }
 
 
+// ── water volume ────────────────────────────────────────────────────────────────────────────
+// One description of what water looks like, shared by the sea (which continues below the bottom
+// of the map) and by water inside it, so a lake and the open sea cannot drift apart.
+//
+// Absorption length is ten cells rather than two and the deep end is a dark blue rather than
+// near-black: a body of water is read from its gradient. With the old numbers everything below
+// the top couple of cells was flat black, so the sea was a black rectangle with a bright line on
+// its surface, and the "water" in a lake could not be told from a hole in the ground.
+vec3 waterBodyColour(float depthBelowSurface)
+{
+  float shallow = exp(-depthBelowSurface * 0.07);
+  const vec3 shallowCol = pow(vec3(0.20, 0.58, 0.60), vec3(GAMMA)); // turquoise, lit from above
+  const vec3 deepCol = pow(vec3(0.14, 0.27, 0.43), vec3(GAMMA));    // deep blue: dark, not black
+  return mix(deepCol, shallowCol, shallow);
+}
+
+// Skylight that reaches a given depth, on a floor. The light texture has already faded to
+// nothing a few cells down — that is what absorption does — and the few percent of ambient the
+// shader allows is not enough to see a body of water by, so the water carries its own.
+vec3 waterSkylight(float depthBelowSurface)
+{
+  return pow(vec3(0.55, 0.68, 0.82), vec3(GAMMA)) * 0.62 * (0.30 + 0.70 * exp(-depthBelowSurface * 0.05));
+}
+
+// Sky reflected off the surface: strongest at the waterline, where the view is grazing, and gone
+// a few cells further down. This is light coming back off the surface, not diffuse light out of
+// the water, so it is added to the emitted light. Folded into the albedo it was multiplied by
+// the local sunlight, which is already zero by then, and the reflection vanished exactly where
+// it belongs.
+vec3 waterSkyReflection(float depthBelowSurface)
+{
+  return pow(vec3(0.47, 0.65, 0.85), vec3(GAMMA)) * exp(-depthBelowSurface * 0.55) * 0.55;
+}
+
 vec4 getAirColor(vec2 fragCoordIn)
 {
   vec2 bndFragCoord = vec2(fragCoordIn.x, clamp(fragCoordIn.y, 0., resolution.y)); // bound y within range
@@ -534,7 +568,25 @@ vec4 getAirColor(vec2 fragCoordIn)
 
 
   float smokeOpacity = clamp(1. - (1. / (water[SMOKE] + 1.)), 0.0, 1.0);
-  float fireIntensity = clamp((smokeOpacity - 0.8) * 25., 0.0, 1.0);
+
+  // Fire is decided by a smooth ramp rather than a threshold. The old term was a step at
+  // smokeOpacity 0.8 scaled by 25, i.e. it flipped from 0 to 1 between two values of the smoke
+  // field, and the smoke field is stored in whole cells: every cell that crossed the step turned
+  // into a solid white square, with hard edges on the cell grid. A ramp reaches white only in the
+  // middle of the hottest cell instead of at its boundary, and the grain below keeps the plateau
+  // from looking like a filled rectangle.
+  float fireIntensity = smoothstep(0.55, 0.95, smokeOpacity);
+
+  // Grain. The fluid stores smoke one cell at a time, so an unmodulated colour is constant
+  // across a cell and the fire reads as a grid of tiles however it is ramped. Two octaves of the
+  // noise texture, drifting upwards with the iteration count, break that up; it is the same
+  // texture the terrain detail uses, so it costs nothing extra.
+  {
+    vec2 grainCoord = fragCoord * vec2(0.055, 0.11) + vec2(0.0, -iterNum * 0.02);
+    float grain = textureLod(noiseTex, grainCoord, 0.0).g * 0.6 + textureLod(noiseTex, grainCoord * 3.7, 0.0).r * 0.4;
+    fireIntensity *= 0.72 + 0.56 * grain;
+    fireIntensity = clamp(fireIntensity, 0.0, 1.0);
+  }
 
   // ── black-body fire colour ───────────────────────────────────────────────
   // Fire colour follows a temperature gradient: deep red at the cool edges,
@@ -544,13 +596,16 @@ vec4 getAirColor(vec2 fragCoordIn)
   {
     float fi = fireIntensity;
     const vec3 fireRed    = vec3(0.62, 0.08, 0.003);  // pre-gamma-corrected
-    const vec3 fireOrange = vec3(0.96, 0.30, 0.02);
-    const vec3 fireYellow = vec3(1.00, 0.72, 0.12);
-    const vec3 fireWhite  = vec3(1.00, 0.92, 0.70);
+    const vec3 fireOrange = vec3(0.96, 0.26, 0.02);
+    const vec3 fireYellow = vec3(1.00, 0.62, 0.08);
+    const vec3 fireWhite  = vec3(1.00, 0.84, 0.52); // warm white: a flame is not a light bulb
     fireCol = mix(fireRed, fireOrange, clamp(fi * 3.33, 0.0, 1.0));           // 0..0.3
     fireCol = mix(fireCol, fireYellow, clamp((fi - 0.3) * 3.33, 0.0, 1.0)); // 0.3..0.6
-    fireCol = mix(fireCol, fireWhite, clamp((fi - 0.6) * 2.5, 0.0, 1.0));   // 0.6..1.0
-    fireCol *= 4.0; // emissive
+    fireCol = mix(fireCol, fireWhite, clamp((fi - 0.72) * 3.57, 0.0, 1.0)); // 0.72..1.0
+    // Emissive, but not by a factor of four: at 4 every pixel of the core clipped to white and
+    // the bloom turned each one into a disc of light, which is the other half of what made a
+    // burning patch read as white squares rather than as fire.
+    fireCol *= 0.85;
   }
 
   vec3 smokeOrFireCol = mix(mix(smokeThinCol, smokeThickCol, smokeOpacity), fireCol, fireIntensity);
@@ -604,20 +659,20 @@ void main()
 
     float depth = float(-wall[VERT_DISTANCE]) - fragCoord.y; // cells below the surface
 
+    lightIntensity = texture(lightTex, vec2(texCoord.x, texelSize.y))[0] / standardSunBrightness; // sample lowest part of sim area
+
     if (wall[TYPE] == WALLTYPE_WATER) {
-      // Underwater: continue the sea's Beer-Lambert water volume (shallow turquoise fading to
-      // deep blue with depth) instead of the terrain cross-section. getWallColor's per-column
-      // relief shading and depth banding (bedrock/snow transitions) tile across the region and
-      // read as a grid over the whole water body; real open water is a smooth, darkening volume.
-      float shallow = exp(-max(depth, 0.0) * 0.55);
-      const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA));
-      const vec3 deepCol = pow(vec3(0.04, 0.11, 0.22), vec3(GAMMA));
-      color = mix(deepCol, shallowCol, shallow);
+      // Underwater: continue the sea's water volume instead of the terrain cross-section.
+      // getWallColor's per-column relief shading and depth banding (bedrock/snow transitions)
+      // tile across the region and read as a grid over the whole water body; real open water is
+      // a smooth, darkening volume (see waterBodyColour).
+      float seaDepth = max(depth, 0.0);
+      color = waterBodyColour(seaDepth);
+      onLight += waterSkylight(seaDepth) * (0.72 + 0.28 * clamp(lightIntensity, 0.0, 1.0));
+      emittedLight += waterSkyReflection(seaDepth) * (0.30 + 0.70 * clamp(lightIntensity, 0.0, 1.5)) * 0.85;
     } else {
       color = getWallColor(depth);
     }
-
-    lightIntensity = texture(lightTex, vec2(texCoord.x, texelSize.y))[0] / standardSunBrightness; // sample lowest part of sim area
     // Sunlight is attenuated as it soaks into the ground (0.5 per cell, as in the lighting
     // shader). That is a factor of a thousand within ten cells, and a cell is a few pixels at
     // the default zoom, so this band went to pure black (measured 10/255) and read as a hole in
@@ -753,25 +808,15 @@ void main()
         // because short wavelengths scatter back; deep water is near-black because
         // all wavelengths are absorbed over long path lengths.
         float depthBelowSurface = max(-float(wall[VERT_DISTANCE]) - (waterLevel - fract(fragCoord.y)), 0.0); // cells below the water line
-
-        float shallow = exp(-depthBelowSurface * 0.55);
-
-        const vec3 shallowCol = pow(vec3(0.18, 0.55, 0.62), vec3(GAMMA)); // turquoise, lit from above
-        const vec3 deepCol = pow(vec3(0.04, 0.11, 0.22), vec3(GAMMA));    // dark blue, kept visible (not black)
         const vec3 sandCol = pow(vec3(0.55, 0.48, 0.36), vec3(GAMMA));    // the lit bottom, seen through very shallow water
+        float shallow = exp(-depthBelowSurface * 0.07);
 
-        color = mix(deepCol, shallowCol, shallow);
+        color = waterBodyColour(depthBelowSurface);
 
-        // ── Fresnel reflection ────────────────────────────────────────────────
-        // At grazing angles the water reflects the sky instead of transmitting
-        // light through itself. This makes the horizon band of the sea a
-        // mirror of the sky, the way real water looks.
-        float viewAngle = clamp(fract(fragCoord.y) - waterLevel + 1.0, 0.0, 1.0);
-        float fresnel = pow(1.0 - viewAngle, 4.0) * 0.40;
-        // The reflected colour is a hint of the sky, matched to the sky shader's horizon so the
-        // sea does not read as a brighter blue-white sheet than the sky above it
-        vec3 skyReflectCol = pow(vec3(0.47, 0.65, 0.85), vec3(GAMMA));
-        color = mix(color, skyReflectCol * clamp(lightIntensity, 0.0, 1.5), fresnel);
+        // Reflected sky at the surface, and the skylight that made it into the water: the same
+        // two terms the open sea uses (see waterSkyReflection / waterSkylight).
+        emittedLight += waterSkyReflection(depthBelowSurface) * (0.30 + 0.70 * clamp(lightIntensity, 0.0, 1.5)) * 0.85;
+        onLight += waterSkylight(depthBelowSurface) * (0.72 + 0.28 * clamp(lightIntensity, 0.0, 1.0));
 
         // The bottom shows through only in the last fraction of a cell.
         float seeThrough = smoothstep(0.55, 0.0, depthBelowSurface) * 0.35;
