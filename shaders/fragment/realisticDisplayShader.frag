@@ -50,6 +50,7 @@ uniform vec4 cursor; // Xpos   Ypos  Size   type
 uniform float displayVectorField;
 
 uniform float iterNum;
+uniform float timeSeconds; // wall clock, seconds; the flash timeline runs on it (see LIGHTNING)
 
 out vec4 fragmentColor;
 
@@ -218,9 +219,18 @@ vec3 getWallColor(float depth)
 
 const float lightningTexAspect = 1024.0 / 2048.0; // width / height of the channel map
 
-const float LEADER_END = 2.2;  // iterations a stepped leader needs to reach the ground
-const float STROKE_TAU = 1.30; // decay time of one return stroke, in iterations
-const float FLASH_END = 12.0;  // nothing of the flash is left after this many iterations
+// The flash runs on the wall clock, not on simulation iterations. A flash lasts a few hundred
+// milliseconds of real time whatever the simulation is doing, and one iteration is however long
+// a frame takes: on the iteration clock the whole flash was over in a dozen frames, which read
+// as a strobe that stopped dead instead of a light that faded.
+const float LEADER_END = 0.22;  // seconds for a stepped leader to reach the ground
+const float STROKE_TAU = 0.100; // decay time constant of one return stroke, in seconds
+const float FLASH_END = 1.35;   // nothing of the flash is left after this many seconds
+
+// Peak HDR value of the return stroke on the channel itself. This is the one number that decides
+// how the fade looks: much above this and the channel stays clipped to white until the very end
+// of the flash and then drops to black in a frame, which is exactly the hard stop we are fixing.
+const float STROKE_GAIN = 14.0;
 
 struct Lightning {
   vec2 origin;
@@ -234,7 +244,7 @@ Lightning decodeLightning()
   vec4 d = texture(lightningDataTex, vec2(0.5));
   Lightning L;
   L.origin = d.xy;
-  L.age = max(iterNum - d[START_ITERNUM], 0.0);
+  L.age = max(timeSeconds - d[START_ITERNUM], 0.0);
   L.intensity = clamp(abs(d[INTENSITY]), 0.2, 4.0);
   L.ic = d[INTENSITY] < -0.05 ? 1.0 : 0.0;
   return L;
@@ -248,7 +258,7 @@ float strokePulse(float t, float t0, float amp, float tau)
   float d = t - t0;
   if (d < 0.0)
     return 0.0;
-  return amp * (1.0 - exp(-d * 26.0)) * exp(-d / tau);
+  return amp * (1.0 - exp(-d * 260.0)) * exp(-d / tau);
 }
 
 // Total optical output of the flash. `leader` comes back separately: it is the faint
@@ -259,25 +269,33 @@ float flashBrightness(Lightning L, out float leader)
   leader = 0.0;
 
   if (L.ic > 0.5) {
-    // Intra-cloud: no leader channel, three or four pulses inside the deck.
-    b += strokePulse(L.age, 0.45, 0.90, 1.05);
-    b += strokePulse(L.age, 1.90, 0.70, 0.95);
-    b += strokePulse(L.age, 3.20, 0.50, 0.85);
-    b += strokePulse(L.age, 4.50, 0.28, 0.80);
+    // Intra-cloud: no leader channel, a few pulses inside the deck. They are wider and live
+    // longer than a return stroke because there is no single channel carrying the current.
+    b += strokePulse(L.age, 0.05, 0.90, 0.135);
+    b += strokePulse(L.age, 0.30, 0.68, 0.125);
+    b += strokePulse(L.age, 0.55, 0.45, 0.115);
+    b += strokePulse(L.age, 0.80, 0.26, 0.105);
   } else {
-    // Cloud-to-ground: stepped leader, then the return stroke and its restrikes. The last,
-    // long-lived term is the continuing current that keeps the channel glowing afterwards.
-    leader = smoothstep(0.0, 0.30, L.age) * (1.0 - smoothstep(LEADER_END, LEADER_END + 0.3, L.age));
+    // Cloud-to-ground: stepped leader, then the return stroke and its restrikes, spaced a few
+    // tens of milliseconds apart the way real interstroke intervals are. The last, long-lived
+    // term is the continuing current that keeps the channel glowing afterwards.
+    leader = smoothstep(0.02, 0.15, L.age) * (1.0 - smoothstep(0.18, 0.30, L.age));
 
     b += strokePulse(L.age, LEADER_END, 1.00, STROKE_TAU);
-    b += strokePulse(L.age, LEADER_END + 1.55, 0.72, STROKE_TAU * 0.85);
-    b += strokePulse(L.age, LEADER_END + 2.90, 0.50, STROKE_TAU * 0.75);
-    b += strokePulse(L.age, LEADER_END + 4.20, 0.30, STROKE_TAU * 0.65);
-    b += strokePulse(L.age, LEADER_END + 5.60, 0.16, STROKE_TAU * 0.60);
+    b += strokePulse(L.age, 0.34, 0.62, STROKE_TAU * 0.85);
+    b += strokePulse(L.age, 0.48, 0.38, STROKE_TAU * 0.72);
+    b += strokePulse(L.age, 0.64, 0.22, STROKE_TAU * 0.58);
+    b += strokePulse(L.age, 0.82, 0.12, STROKE_TAU * 0.46);
+
+    // Continuing current: after the last restrike the channel keeps glowing at a low level for
+    // a while. Without it the flash falls off a cliff when the last pulse dies, which is the
+    // hard stop this timeline exists to get rid of.
+    b += 0.085 * smoothstep(0.10, 0.45, L.age) * exp(-max(L.age - 0.25, 0.0) / 0.42);
   }
 
   b *= 0.55 + 0.45 * L.intensity;
-  return b * (1.0 - smoothstep(FLASH_END - 4.0, FLASH_END, L.age));
+  // Long, soft tail: the last half second of the flash ramps to zero instead of being cut.
+  return b * (1.0 - smoothstep(FLASH_END - 0.55, FLASH_END, L.age));
 }
 
 // The stepped leader does not glide down: it runs, stalls, and steps again.
@@ -309,7 +327,7 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
 
   if (L.ic < 0.5) {
     // ─────────────── cloud-to-ground ───────────────
-    float tip = mix(leaderProgress(L), 1.0, smoothstep(LEADER_END - 0.15, LEADER_END + 0.30, L.age));
+    float tip = mix(leaderProgress(L), 1.0, smoothstep(LEADER_END - 0.05, LEADER_END + 0.12, L.age));
     float visible = (1.0 - smoothstep(tip - 0.02, tip, uv.y)) * step(-0.01, uv.y);
 
     // Auto LOD: sharp when the camera is close, smoothly integrated when the whole bolt is a
@@ -319,33 +337,52 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float core = smoothstep(0.02, 0.55, ch.r);
     float sheath = smoothstep(0.03, 0.50, ch.g);
 
-    // The return stroke is blinding (thousands of times the exposure), the leader is a faint
-    // violet thread, and the branches are dimmer and bluer than the trunk because less current
-    // reaches them.
-    emitted += vec3(0.90, 0.95, 1.00) * core * bright * 4200.0 * visible;
-    emitted += vec3(0.52, 0.62, 1.00) * core * leader * 3.0 * visible;
-    emitted += vec3(0.46, 0.58, 1.00) * sheath * (bright * 200.0 + leader * 10.0) * visible;
+    // Colour from temperature. The current-carrying core of a return stroke is a plasma at
+    // 20 000-30 000 K, which is blue-white; the sheath and the branches carry less current and
+    // are cooler, and the light scattered off the air around the channel comes off cooler still.
+    // Deriving the colour from the temperature rather than picking an RGB triple is what puts
+    // the white-hot core inside a violet-blue fringe, which is how a real bolt photographs.
+    vec3 colCore = blackbodyRGB(mix(12000.0, 30000.0, core));
+    vec3 colSheath = blackbodyRGB(mix(7000.0, 15000.0, sheath));
+    vec3 colLeader = blackbodyRGB(9000.0);
+    vec3 colHalo = blackbodyRGB(7500.0);
+    vec3 colGround = blackbodyRGB(12000.0);
+
+    // The return stroke is blinding, the leader is a faint violet thread, and the branches are
+    // dimmer and cooler than the trunk because less current reaches them.
+    emitted += colCore * core * bright * STROKE_GAIN * visible;
+    emitted += colLeader * core * leader * 0.55 * visible;
+    emitted += colSheath * sheath * (bright * 1.7 + leader * 0.10) * visible;
 
     // Halo: the air around the channel scatters its light, and that scattered light is what you
     // actually see from a few kilometres away. Two scales — a tight sheath right on the stroke
     // and a wide atmospheric glow. The amplitudes are in tone-mapped units: the stroke itself
     // has to blow out, and the halo has to fall away to a faint blue tinge a few hundred metres
     // out. Any brighter than this and the whole bolt reads as a solid bar of white.
-    float halo = exp(-dx * dx / 0.00003) * 0.30 + exp(-dx * dx / 0.0008) * 0.065;
-    emitted += vec3(0.55, 0.63, 1.00) * halo * bright * visible;
+    // Both terms are functions of the horizontal distance from the strike axis only, so on their
+    // own they draw a perfectly straight vertical line the full height of the bolt and the
+    // zig-zag of the channel reads as a bolt wrapped around a wire. That line was the last thing
+    // left in the tail of a flash, when everything else had faded: a faint but unmistakable
+    // straight thread hanging in the sky. Weighting them by the channel keeps the tight sheath on
+    // the stroke; the wide term keeps a quarter of its strength unweighted, because light
+    // scattered out of a column of air really is smooth and does not follow the zig-zag.
+    float channel = max(core, sheath);
+    float halo = exp(-dx * dx / 0.00003) * 0.42 * core
+               + exp(-dx * dx / 0.0008) * 0.085 * mix(0.25, 1.0, channel);
+    emitted += colHalo * halo * bright * visible;
 
     // Strike point: a blown-out spot plus a wide splash of light running along the ground,
     // only from the return stroke on, which is when the channel actually touches down.
     float g2 = dx * dx + texCoord.y * texCoord.y * 0.75;
-    float ground = exp(-g2 / 0.00012) * 60.0 + exp(-g2 / 0.0025) * 0.30;
-    emitted += vec3(0.66, 0.74, 1.00) * ground * bright * step(LEADER_END - 0.2, L.age);
+    float ground = exp(-g2 / 0.00012) * 1.8 + exp(-g2 / 0.0025) * 0.25;
+    emitted += colGround * ground * bright * step(LEADER_END - 0.06, L.age);
 
     // The cloud the channel came out of is lit from the inside as well: a bright base right
     // above the strike and a wide diffuse glow across the deck.
     float cy = texCoord.y - L.origin.y;
     float nearCloud = exp(-(dx * dx + cy * cy * 1.4) / 0.008);
     float farCloud = exp(-(dx * dx + cy * cy * 2.6) / 0.06);
-    emitted += vec3(0.60, 0.66, 0.95) * (nearCloud * 0.75 + farCloud * 0.10) * cloudMask * bright;
+    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * bright;
 
   } else {
     // ─────────────── intra-cloud ───────────────
@@ -355,7 +392,9 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
 
     // Sheet lightning: a broad, soft ellipse of light inside the cloud.
     float sheet = exp(-(dx * dx + cy * cy * 1.8) / 0.045) * 1.5 + exp(-(dx * dx + cy * cy * 2.4) / 0.16) * 0.35;
-    emitted += vec3(0.55, 0.62, 0.94) * sheet * cloudMask * bright;
+    // Light diffused through a kilometre of cloud has lost the colour of the plasma: it comes
+    // out as the cooler end of the range, which is why an IC flash reads blue, not white.
+    emitted += blackbodyRGB(6500.0) * sheet * cloudMask * bright;
 
     // Crawlers grow outward from the discharge point as the flash develops. They may only be
     // drawn inside the texture: outside it the sampler clamps to the edge column and a single
@@ -366,18 +405,20 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     // IC network streaks across a kilometre of cloud base, so the lookup is stretched to spread
     // it over the deck. That also turns the filaments into long horizontal streaks, which is
     // exactly what spider lightning looks like from below.
+    // A level of mip bias on top of the auto LOD: a filament is barely a texel wide, and at
+    // close zoom a sharp lookup turns the network into a dotted line.
     vec2 uvIC = vec2(0.5 + (uv.x - 0.5) * 0.42, uv.y);
-    vec4 ch = texture(lightningTex, clamp(uvIC, vec2(0.002), vec2(0.998)));
-    float reach = clamp(L.age / 1.8, 0.0, 1.0);
+    vec4 ch = texture(lightningTex, clamp(uvIC, vec2(0.002), vec2(0.998)), 1.0);
+    float reach = clamp(L.age / 0.45, 0.0, 1.0); // the network spreads over the first half second
     float r = abs(uv.x - 0.5) * 2.0;
     float growth = 1.0 - smoothstep(reach - 0.30, reach, r);
     float inside = step(0.0, uv.y) * step(uv.y, 1.0) * step(0.002, uv.x) * step(uv.x, 0.998);
-    float filament = smoothstep(0.05, 0.55, ch.b) * growth * inside;
+    float filament = smoothstep(0.04, 0.50, ch.b) * growth * inside;
     // Seen through the cloud base, so it is dim and blue rather than a white channel, and it
     // sits inside a soft haze of its own scattered light.
     float haze = smoothstep(0.0, 0.45, ch.b) * growth * inside;
-    emitted += vec3(0.60, 0.70, 1.00) * filament * bright * 55.0;
-    emitted += vec3(0.42, 0.52, 0.95) * haze * bright * 4.0;
+    emitted += blackbodyRGB(9000.0) * filament * bright * 1.4;
+    emitted += blackbodyRGB(7000.0) * haze * bright * 0.22;
 
   }
 

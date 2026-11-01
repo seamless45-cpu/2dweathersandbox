@@ -44,9 +44,8 @@ void main()
       break;
     case 2: // water wall
       // fragmentColor = vec4(0, 0.5, 0.99, 1);
-      int palletteIndex = int(map_range(KtoC(base[3]), -26. - 2., 30., 0., 29.));
-      palletteIndex = clamp(palletteIndex, 0, 29);
-      fragmentColor = vec4(tempColorPalette[palletteIndex], 1.0);
+      // Water stores its absolute temperature, so it uses the same kelvin ramp as the air.
+      fragmentColor = vec4(temperatureRamp(base[3]), 1.0);
       break;
     case 3: // Fire wall
       fragmentColor = vec4(1.0, 0.5, 0.0, 1);
@@ -54,9 +53,9 @@ void main()
     }
   } else { // fluid
 
-    int palletteIndex = int(map_range(realTempC, -71.0, 59.0, 0., 130.));
-    palletteIndex = clamp(palletteIndex, 0, 130);
-    fragmentColor = texelFetch(colorScalesTex, ivec2(0, palletteIndex), 0);
+    // Potential temperature -> the real temperature at that height, in kelvin: the colour follows
+    // the absolute temperature directly (see temperatureRamp in commonDisplay.glsl).
+    fragmentColor = vec4(temperatureRamp(potentialToRealT(base[3])), 1.0);
 
     drawVectorField(base.xy, displayVectorField);
   }

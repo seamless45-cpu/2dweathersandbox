@@ -129,6 +129,11 @@
 
   function strokePath(g, pts, widthScale, alpha)
   {
+    // Round caps and joins. Every segment is stroked on its own, and with the default butt caps
+    // the joins between them are gaps: a thin channel comes out of the generator as a dotted
+    // line, which then has to be smeared away at render time to hide it.
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
     g.globalAlpha = alpha === undefined ? 1 : alpha;
     for (let i = 0; i < pts.length; i++) {
       const s = pts[i];

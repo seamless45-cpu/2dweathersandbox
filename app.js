@@ -449,6 +449,8 @@ const guiControls_default = {
   SmoothCam : true,
   camSpeed : 0.01,
   exposure : 1.0,
+  bloomStrength : 2.40, // how much of the bright pass is added back over the frame
+  bloomThreshold : 0.55, // linear HDR brightness below which nothing blooms
   displayResScale : 0.72, // internal display resolution (0..1). The scene renders at this fraction
                           // of the window and the single post pass upscales it, cutting fragment
                           // cost while the smooth upscale keeps the visuals intact.
@@ -527,7 +529,10 @@ const timePerIteration = 0.00008; // in hours (0.00008 = 0.288 sec, at 40m cell 
 var NUM_DROPLETS;
 const NUM_DROPLETS_DEVIDER = 1; // no divider — max droplets = full sim resolution
 
+let simTimeSeconds = 0;    // the flash clock: real time, but frozen whenever the sim is paused
+let lastFrameWallTime = 0; // performance.now() of the previous frame, in seconds
 let hdrFBO;
+let bloomFBOs = []; // per level: [ ping, pong ]
 
 let ambientLightFBOs = [];
 let emittedLightFBO;
@@ -898,6 +903,24 @@ function createHdrFBO() {
   const w = Math.max(2, Math.round(canvas.width * scale));
   const h = Math.max(2, Math.round(canvas.height * scale));
   hdrFBO = new FBO(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
+}
+
+let lastLightningStrikeTime = -1; // wall-clock time of the last strike we played thunder for
+
+// Levels of the bloom chain: quarter, eighth and sixteenth of the canvas, two targets each so the
+// blur can ping-pong. The wide end is what makes a flash read as a flash — a glow that reaches
+// across a good part of the sky — and the tight end keeps the light close to the channel from
+// looking like a fog bank. All three are summed in the post pass.
+const BLOOM_LEVELS = [ 2, 6, 16 ]; // canvas is divided by these
+
+function createBloomFBOs() {
+  bloomFBOs.length = 0;
+  for (const divisor of BLOOM_LEVELS) {
+    const w = Math.max(2, Math.round(canvas.width / divisor));
+    const h = Math.max(2, Math.round(canvas.height / divisor));
+    bloomFBOs.push([ new FBO(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR),
+                     new FBO(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR) ]);
+  }
 }
 
 function createAmbientLightFBOs()
@@ -4160,9 +4183,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Exposure');
 
+    display_folder.add(guiControls, 'bloomStrength', 0.0, 6.0, 0.05)
+      .name('Lightning Bloom');
+
+    display_folder.add(guiControls, 'bloomThreshold', 0.05, 4.0, 0.05)
+      .name('Bloom Threshold');
+
     display_folder.add(guiControls, 'displayResScale', 0.40, 2.0, 0.02)
       .onChange(function() {
         createHdrFBO(); // rebuild the HDR buffer at the new internal resolution
+        createBloomFBOs();
       })
       .name('Display Resolution');
 
@@ -4600,7 +4630,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     soundingGraph.graphCanvas.width = window.innerHeight;
 
     // Render output framebuffers need to match canvas resolution
-    createHdrFBO(); // recreate hdr framebuffer
+    createHdrFBO();      // recreate hdr framebuffer
+    createBloomFBOs();   // and the bloom chain, which is sized off the canvas
   });
 
   function logSample()
@@ -5130,6 +5161,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   // screen bloom, which is gone)
   const lightBlurShader = await loadShader('bloomBlurShader.frag');
 
+  const bloomExtractShader = await loadShader('bloomExtractShader.frag');
+
 
   // create programs
   const pressureProgram = createProgram(simVertexShader, pressureShader);
@@ -5156,6 +5189,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   const postProcessingProgram = createProgram(postProcessingVertexShader, postProcessingShader);
   const lightBlurProgram = createProgram(postProcessingVertexShader, lightBlurShader);
+  const bloomExtractProgram = createProgram(postProcessingVertexShader, bloomExtractShader);
 
 
   await loadingBar.set(80, 'Setting up textures');
@@ -5948,6 +5982,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   await loadingBar.set(90, 'Setting up FBO`s');
 
   createHdrFBO();
+  createBloomFBOs();
 
   var texelSizeX = 1.0 / sim_res_x;
   var texelSizeY = 1.0 / sim_res_y;
@@ -6195,6 +6230,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   gl.useProgram(postProcessingProgram);
   gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'hdrTex'), 0);
+  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex'), 11);
+  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex2'), 12);
+  gl.uniform1i(gl.getUniformLocation(postProcessingProgram, 'bloomTex3'), 13);
+  gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'bloomStrength'), guiControls.bloomStrength);
 
   gl.useProgram(lightningLocationProgram);
   gl.uniform1i(gl.getUniformLocation(lightningLocationProgram, 'precipFeedbackTex'), 0);
@@ -6245,6 +6284,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   var uniformLocation_precipitationProgram_inactiveDroplets = gl.getUniformLocation(precipitationProgram, 'inactiveDroplets');
   var uniformLocation_lightningLocationProgram_iterNum = gl.getUniformLocation(lightningLocationProgram, 'iterNum');
   var uniformLocation_precipDisplay_aspectRatios = gl.getUniformLocation(precipDisplayProgram, 'aspectRatios');
+  var uniformLocation_precipitationProgram_timeSeconds = gl.getUniformLocation(precipitationProgram, 'timeSeconds');
   var uniformLocation_precipDisplay_view = gl.getUniformLocation(precipDisplayProgram, 'view');
   var uniformLocation_precipDisplay_canvasSize = gl.getUniformLocation(precipDisplayProgram, 'canvasSize');
   var uniformLocation_precipDisplay_wrapShift = gl.getUniformLocation(precipDisplayProgram, 'wrapShift');
@@ -6259,6 +6299,21 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
   function draw()
   { // Runs for every frame
+    // One clock for the whole frame: the lightning flash timeline runs on it (see
+    // realisticDisplayShader.frag), and every program that draws or records a strike has to read
+    // the same value or the bolt and its glow drift apart. It is the wall clock integrated frame
+    // by frame rather than performance.now() directly, so that pausing the simulation freezes a
+    // flash in place instead of letting it run out behind a frozen world.
+    {
+      const wall = performance.now() * 0.001;
+      if (lastFrameWallTime == 0)
+        lastFrameWallTime = wall;
+      const dt = Math.min(wall - lastFrameWallTime, 0.25); // no jump after a long stall
+      lastFrameWallTime = wall;
+      if (!guiControls.paused)
+        simTimeSeconds += dt;
+    }
+
     let camPanSpeed = guiControls.camSpeed;
 
     if (rightCtrlPressed) {
@@ -6522,6 +6577,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.activeTexture(gl.TEXTURE5);
             gl.bindTexture(gl.TEXTURE_2D, lightningDataTexture);
             gl.uniform1f(gl.getUniformLocation(lightingProgram, 'iterNum'), iterNum);
+            gl.uniform1f(gl.getUniformLocation(lightingProgram, 'timeSeconds'), simTimeSeconds);
             gl.uniform2f(gl.getUniformLocation(lightingProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
 
             gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1 ]); // calc light
@@ -6535,6 +6591,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
               gl.useProgram(precipitationProgram);
               gl.uniform1f(uniformLocation_precipitationProgram_iterNum, iterNum);
+              gl.uniform1f(uniformLocation_precipitationProgram_timeSeconds, simTimeSeconds);
               gl.enable(gl.BLEND);
               gl.blendFunc(gl.ONE, gl.ONE); // add everything together
               gl.activeTexture(gl.TEXTURE0);
@@ -6572,6 +6629,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               // Extract lightningLocation from precipitationfeedback
               gl.useProgram(lightningLocationProgram);
               gl.uniform1f(uniformLocation_lightningLocationProgram_iterNum, iterNum);
+              gl.uniform1f(gl.getUniformLocation(lightningLocationProgram, 'timeSeconds'), simTimeSeconds);
 
               gl.activeTexture(gl.TEXTURE0);
               gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
@@ -6586,7 +6644,11 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
                 gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, lightningDataValues);
                 // console.log('lightningDataValues: ', lightningDataValues[0], lightningDataValues[1], lightningDataValues[2], iterNum, lightningDataValues[3]);
 
-                if (Math.round(lightningDataValues[2]) == iterNum) {
+                // The z channel is the wall-clock time the flash started, so a new strike is a
+                // value that has moved forward (there is no iteration to compare against any
+                // more: the flash clock is seconds).
+                if (lightningDataValues[3] != 0.0 && lightningDataValues[2] > lastLightningStrikeTime + 1e-4) {
+                  lastLightningStrikeTime = lightningDataValues[2];
                   // The sign of the intensity is the flash type: negative = intra-cloud. A CG
                   // strike is a sharp crack; an IC flash is the long rumble heard through the
                   // cloud, so they use their own sound sets (see SoundSystem).
@@ -6801,6 +6863,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.uniform4f(gl.getUniformLocation(realisticDisplayProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'Xmult'), horizontalDisplayMult);
       gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'iterNum'), iterNum);
+      gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'timeSeconds'), simTimeSeconds);
 
       // Don't display vectors when zoomed out because you would just see noise
       if (cam.curZoom / sim_res_x > 0.003) {
@@ -6826,15 +6889,78 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       gl.disable(gl.BLEND);
 
-      // Post processing: tone map the HDR frame straight to the canvas. This used to be a
-      // bright-extraction pass plus a full multi-level blur chain, whose result was added back
-      // over the frame; with the bloom gone it is a single full screen pass.
+      // ── screen bloom ─────────────────────────────────────────────────────────────────────
+      // Bright pass at a quarter of the canvas, then a three-level progressive blur: each level
+      // downsamples the one before it and is blurred twice in place, so the widest glow costs a
+      // handful of passes over a 60x34 target. This is what makes a flash read as a flash — the
+      // bolt itself is a hairline, and nearly everything the eye sees of it is light scattered
+      // off the air, the cloud and the camera lens.
+      //
+      // The kernels stay at one or two texels per pass on purpose. Few taps over a large radius
+      // (a single pass sampling twelve texels out) does not blur a thin bright line, it stamps
+      // copies of it, which shows up as hard banding either side of the bolt.
+      {
+        gl.bindVertexArray(postProcessingVao);
+
+        // 1. bright pass into the quarter-resolution level
+        const level0 = bloomFBOs[0];
+        gl.bindFramebuffer(gl.FRAMEBUFFER, level0[0].frameBuffer);
+        gl.viewport(0, 0, level0[0].width, level0[0].height);
+        gl.useProgram(bloomExtractProgram);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
+        gl.uniform2f(gl.getUniformLocation(bloomExtractProgram, 'texelSize'), 1.0 / hdrFBO.width, 1.0 / hdrFBO.height);
+        gl.uniform1f(gl.getUniformLocation(bloomExtractProgram, 'threshold'), guiControls.bloomThreshold);
+        gl.uniform1f(gl.getUniformLocation(bloomExtractProgram, 'knee'), 0.6);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        gl.useProgram(lightBlurProgram);
+        gl.uniform1i(gl.getUniformLocation(lightBlurProgram, 'inputTexture'), 0);
+        gl.activeTexture(gl.TEXTURE0);
+
+        const blur = (from, to, radius) => {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, to.frameBuffer);
+          gl.viewport(0, 0, to.width, to.height);
+          gl.bindTexture(gl.TEXTURE_2D, from.texture);
+          // texelSize drives the tap offsets in both the vertex shader and the fragment shader,
+          // so scaling it widens the kernel without touching the shader itself
+          gl.uniform2f(gl.getUniformLocation(lightBlurProgram, 'texelSize'), radius / to.width, radius / to.height);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        };
+
+        // 2. blur each level in place, then copy it down into the next, coarser one. The widest
+        // level gets an extra pair of passes: it is the one that decides how far the glow reaches.
+        for (let level = 0; level < bloomFBOs.length; level++) {
+          const [ a, b ] = bloomFBOs[level];
+          // More passes the coarser the level: a handful of taps at a large radius does not blur,
+          // it puts copies of the source down next to each other, and upsampled from a target
+          // this small that reads as a boxy halo with hard edges.
+          const passes = 1 + level;
+
+          for (let i = 0; i < passes; i++) {
+            blur(a, b, 1.0);
+            blur(b, a, 1.6);
+          }
+
+          if (level + 1 < bloomFBOs.length)
+            blur(a, bloomFBOs[level + 1][0], 1.0); // downsample into the next level
+        }
+      }
+
+      // Post processing: tone map the HDR frame straight to the canvas, with the bloom added on
+      // top of it in linear light (see postProcessingShader.frag).
 
       gl.bindVertexArray(postProcessingVao);
 
       gl.useProgram(postProcessingProgram);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
+      for (let level = 0; level < bloomFBOs.length; level++) {
+        gl.activeTexture(gl.TEXTURE11 + level);
+        gl.bindTexture(gl.TEXTURE_2D, bloomFBOs[level][0].texture);
+      }
+
+      gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'bloomStrength'), SETUP_MODE ? 0.0 : guiControls.bloomStrength);
 
       if (SETUP_MODE) {
         gl.uniform1f(gl.getUniformLocation(postProcessingProgram, 'exposure'), 50.0);

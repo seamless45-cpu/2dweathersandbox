@@ -45,19 +45,21 @@ uniform float dryLapse;
 uniform sampler2D lightningTex;
 uniform sampler2D lightningDataTex;
 uniform float iterNum;
-uniform vec2 aspectRatios; // [0] sim       [1] canvas
+uniform float timeSeconds; // wall clock, seconds; the flash timeline runs on it
+uniform vec2 aspectRatios;  // [0] sim       [1] canvas
 
-// Must match realisticDisplayShader.frag, otherwise the glow and the bolt drift apart.
-const float LEADER_END = 2.2;
-const float STROKE_TAU = 1.30;
-const float FLASH_END = 12.0;
+// Must match realisticDisplayShader.frag, otherwise the glow and the bolt drift apart. Both run
+// on the wall clock so the flash fades smoothly whatever the simulation framerate is.
+const float LEADER_END = 0.22;
+const float STROKE_TAU = 0.100;
+const float FLASH_END = 1.35;
 
 float strokePulse(float t, float t0, float amp, float tau)
 {
   float d = t - t0;
   if (d < 0.0)
     return 0.0;
-  return amp * (1.0 - exp(-d * 26.0)) * exp(-d / tau);
+  return amp * (1.0 - exp(-d * 260.0)) * exp(-d / tau);
 }
 
 // Total optical output of the flash; `ic` is 1 for an intra-cloud flash.
@@ -66,21 +68,23 @@ float flashBrightness(float age, float intensity, float ic)
   float b = 0.0;
 
   if (ic > 0.5) {
-    b += strokePulse(age, 0.45, 0.90, 1.05);
-    b += strokePulse(age, 1.90, 0.70, 0.95);
-    b += strokePulse(age, 3.20, 0.50, 0.85);
-    b += strokePulse(age, 4.50, 0.28, 0.80);
+    b += strokePulse(age, 0.05, 0.90, 0.135);
+    b += strokePulse(age, 0.30, 0.68, 0.125);
+    b += strokePulse(age, 0.55, 0.45, 0.115);
+    b += strokePulse(age, 0.80, 0.26, 0.105);
   } else {
     b += strokePulse(age, LEADER_END, 1.00, STROKE_TAU);
-    b += strokePulse(age, LEADER_END + 1.55, 0.72, STROKE_TAU * 0.85);
-    b += strokePulse(age, LEADER_END + 2.90, 0.50, STROKE_TAU * 0.75);
-    b += strokePulse(age, LEADER_END + 4.20, 0.30, STROKE_TAU * 0.65);
-    b += strokePulse(age, LEADER_END + 5.60, 0.16, STROKE_TAU * 0.60);
-    b += 0.05 * smoothstep(LEADER_END, LEADER_END + 0.3, age) * exp(-max(age - LEADER_END, 0.0) / 5.0);
+    b += strokePulse(age, 0.34, 0.62, STROKE_TAU * 0.85);
+    b += strokePulse(age, 0.48, 0.38, STROKE_TAU * 0.72);
+    b += strokePulse(age, 0.64, 0.22, STROKE_TAU * 0.58);
+    b += strokePulse(age, 0.82, 0.12, STROKE_TAU * 0.46);
+
+    // continuing current, matches realisticDisplayShader.frag
+    b += 0.085 * smoothstep(0.10, 0.45, age) * exp(-max(age - 0.25, 0.0) / 0.42);
   }
 
   b *= 0.55 + 0.45 * intensity;
-  return b * (1.0 - smoothstep(FLASH_END - 4.0, FLASH_END, age));
+  return b * (1.0 - smoothstep(FLASH_END - 0.55, FLASH_END, age));
 }
 
 // ========================= reworked longwave IR =========================
@@ -294,7 +298,7 @@ void main()
     {
       vec4 lightningData = texture(lightningDataTex, vec2(0.5));
       float lightningIntensity = abs(lightningData[INTENSITY]);
-      float lightningAge = max(iterNum - lightningData[START_ITERNUM], 0.0);
+      float lightningAge = max(timeSeconds - lightningData[START_ITERNUM], 0.0);
       float lightningIC = lightningData[INTENSITY] < -0.05 ? 1.0 : 0.0;
       float lightningBright = flashBrightness(lightningAge, lightningIntensity, lightningIC);
 

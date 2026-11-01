@@ -16,6 +16,10 @@ uniform vec2 texelSize;
 uniform float exposure;
 
 uniform sampler2D hdrTex;
+uniform sampler2D bloomTex;  // tight glow  (quarter resolution)
+uniform sampler2D bloomTex2; // medium      (eighth)
+uniform sampler2D bloomTex3; // wide halo   (sixteenth)
+uniform float bloomStrength;
 out vec4 fragmentColor;
 
 
@@ -50,11 +54,21 @@ float interleavedGradientNoise(vec2 pixel)
 
 void main()
 {
-  // No bloom pass any more: the screen-wide blur was adding a large, blurred copy of the bright
-  // parts of the frame on top of everything (the bright-extraction ramp was about fifty times
-  // stronger than the one it replaced), which is what made the image both washed out and soft.
-  // The scene is rendered straight into a linear HDR buffer and tone mapped here.
+  // The scene is rendered into a linear HDR buffer, and the bloom is added back on top of it
+  // here, in the same linear units and before tone mapping, so the glow rolls off through the
+  // same curve as the light that caused it. The bloom chain only carries light above the
+  // threshold (see bloomExtractShader.frag), which in this scene means lightning, the sun and
+  // bright sunlit cloud edges — not the whole frame, which is what made the old bloom wash the
+  // image out.
   vec3 outputCol = texture(hdrTex, texCoord).rgb;
+
+  // Three levels of glow, summed with falling weights: the tight one keeps the light on the
+  // channel, the wide one is the halo that carries across the sky. Sampling the coarse levels
+  // with the bilinear filter smooths them for free.
+  vec3 bloom = texture(bloomTex, texCoord).rgb * 0.55
+             + texture(bloomTex2, texCoord).rgb * 0.55
+             + texture(bloomTex3, texCoord).rgb * 0.60;
+  outputCol += bloom * bloomStrength;
 
   outputCol *= exposure;
 
