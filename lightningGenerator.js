@@ -407,79 +407,93 @@
   function generateIC(rng, w, h)
   {
     const crawlers = [];
-    const centre = w * 0.5;
-    const bandY = h * 0.06; // the charge layer, just below the origin inside the cloud
 
-    // Keep filaments near the charge layer and off the frame edges.
-    function steerBand(off, x, y)
+    // The whole network lives in a shallow band near the top of the map, because that is where
+    // the shader looks for it: it is mapped onto a sheet a few hundred metres thick, not onto
+    // the full height of the flash. Anything drawn below bandBottom would be projected into the
+    // air under the cloud and read as a channel hanging in mid air.
+    const bandY = h * 0.10;      // centre of the charge layer
+    const bandTop = h * 0.02;
+    const bandBottom = h * 0.22;
+
+    // Growth meanders are steered back into the band and away from the frame edges. A discharge
+    // layer is horizontal, so the correction on the vertical offset is much stronger than the
+    // one on the horizontal: filaments must not wander out of the layer, but they are free to
+    // run a long way sideways.
+    function steerBand(off, x, y, axis)
     {
-      let o = off - (y - bandY) * 0.02;
-      const edge = w * 0.09;
-      if (x < edge) o += (1 - x / edge) * 0.7;
-      if (x > w - edge) o -= (1 - (w - x) / edge) * 0.7;
-      return o;
+      // Which way is "up" depends on which way the lane is running. `grow` measures the heading
+      // from straight down and turns it by adding to the offset, so a positive offset lifts a
+      // lane that runs right but drops a lane that runs left. Steering that ignores this pushes
+      // a lane that has drifted out of the layer further out: one wrong sign and the "horizontal
+      // crawler" climbed straight up the map and then down into the air below the cloud.
+      const sgn = Math.sin(axis) >= 0 ? 1 : -1;
+      const dyBand = y - bandY;
+      const k = dyBand > 0 ? 0.055 : 0.030; // climbing back out of the base is the urgent case
+      return off + sgn * dyBand * k;
     }
 
-    const lanes = 5 + Math.floor(rng() * 4);
-    for (let l = 0; l < lanes; l++) {
-      const y0 = bandY + (rng() - 0.5) * h * 0.10;
-      const dir = l % 2 === 0 ? 1 : -1;
-      const baseAngle = dir * Math.PI * 0.5;
-      const path = grow(rng, {
-        x : centre + (rng() - 0.5) * w * 0.06,
-        y : y0,
-        angle : baseAngle + (rng() - 0.5) * 0.25,
-        length : w * (0.28 + rng() * 0.34),
-        wTop : 1.9 + rng() * 0.9,
-        wBot : 0.8,
-        taperPow : 0.8,
-        segLen : h / 60,
-        kink : 0.8,
-        zigzag : 0.70,
-        spring : 0.16,
-        micro : 0.06,
-        sub : 2,
-        axisDrift : 0.03,
-        wander : 0.03,
-        steer : steerBand,
-        bounds : {
-          x0 : 0,
-          x1 : w,
-          y0 : 0,
-          y1 : h,
-        },
-      });
-      crawlers.push({pts : path, alpha : 0.7 + rng() * 0.3});
+    const band = {
+      x0 : 0,
+      x1 : w,
+      y0 : bandTop,
+      y1 : bandBottom,
+    };
 
-      // filaments branching off the lane, some of which dive below the cloud base
-      const skip = Math.max(4, Math.round(path.length / 11));
-      for (let i = skip; i < path.length - 1; i += skip) {
-        const s = path[i];
-        const droop = rng() < 0.44;
+    // Spokes of the spider, radiating sideways from the middle of the layer. `grow` measures an
+    // angle from straight down, so ±PI/2 is horizontal; the jitter around it gives the network
+    // its fan shape without ever sending a lane off toward the ground.
+    const spokes = 7 + Math.floor(rng() * 5);
+    for (let l = 0; l < spokes; l++) {
+      const dir = l % 2 === 0 ? 1 : -1;
+      const fan = (rng() - 0.5) * 0.9;
+      const lane = grow(rng, {
+        x : w * 0.5 + (rng() - 0.5) * w * 0.10,
+        y : bandY + (rng() - 0.5) * h * 0.035,
+        angle : dir * Math.PI * 0.5 + fan,
+        length : w * (0.16 + rng() * 0.28),
+        wTop : 1.8 + rng() * 0.7,
+        wBot : 0.9,
+        taperPow : 0.8,
+        segLen : h / 70,
+        kink : 0.7,
+        zigzag : 0.72,
+        spring : 0.16,
+        micro : 0.05,
+        sub : 2,
+        axisDrift : 0.05,
+        wander : 0.02,
+        steer : steerBand,
+        bounds : band,
+      });
+      crawlers.push({pts : lane, alpha : 0.7 + rng() * 0.3});
+
+      // Forks off the lane. Most stay in the layer and spread sideways like the rest of the
+      // network; every third one is a "leg" that dips out of the base, which is the detail that
+      // makes spider lightning look like it is hanging under the cloud rather than drawn on it.
+      const skip = Math.max(3, Math.round(lane.length / 9));
+      for (let i = skip; i < lane.length - 1; i += skip) {
+        const s = lane[i];
+        const droop = rng() < 0.34;
         const sub = grow(rng, {
           x : s.x,
           y : s.y,
-          angle : droop ? Math.PI + (rng() - 0.5) * 0.5 // straight down: a spider leg
-                        : (rng() < 0.5 ? -1 : 1) * (0.55 + rng() * 0.8),
-          length : h * (droop ? 0.04 + rng() * 0.15 : 0.015 + rng() * 0.06),
-          wTop : 1.0 + rng() * 0.6,
+          angle : droop ? Math.PI + (rng() - 0.5) * 0.35 // a short leg out of the base
+                        : (rng() < 0.5 ? -1 : 1) * (Math.PI * 0.30 + rng() * 0.55),
+          length : h * (droop ? 0.02 + rng() * 0.07 : 0.02 + rng() * 0.07),
+          wTop : 1.0 + rng() * 0.5,
           wBot : 0.5,
           taperPow : 0.9,
-          segLen : h / 80,
-          kink : 0.9,
+          segLen : h / 90,
+          kink : 0.8,
           zigzag : 0.66,
           spring : 0.18,
-          micro : 0.06,
+          micro : 0.05,
           sub : 2,
-          wander : 0.03,
-          bounds : {
-            x0 : 0,
-            x1 : w,
-            y0 : 0,
-            y1 : h,
-          },
+          wander : 0.02,
+          bounds : band,
         });
-        crawlers.push({pts : sub, alpha : 0.35 + rng() * 0.35});
+        crawlers.push({pts : sub, alpha : 0.32 + rng() * 0.34});
       }
     }
 

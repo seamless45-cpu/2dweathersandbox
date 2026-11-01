@@ -307,7 +307,7 @@ float leaderProgress(Lightning L)
   return mix(p, q, 0.55);
 }
 
-vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensity)
+vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensity, float cloudCover)
 {
   vec3 emitted = vec3(0.0);
   if (L.age > FLASH_END)
@@ -382,43 +382,79 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     float cy = texCoord.y - L.origin.y;
     float nearCloud = exp(-(dx * dx + cy * cy * 1.4) / 0.008);
     float farCloud = exp(-(dx * dx + cy * cy * 2.6) / 0.06);
-    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * bright;
+    emitted += blackbodyRGB(7000.0) * (nearCloud * 0.85 + farCloud * 0.12) * cloudMask * (0.15 + 0.85 * cloudCover) * bright;
 
   } else {
     // ─────────────── intra-cloud ───────────────
-    // Nothing reaches the ground. The deck glows from the inside, and the crawler network is
-    // visible where the cloud base is thin and the light can escape.
-    float cy = texCoord.y - L.origin.y;
+    // Nothing reaches the ground. A discharge layer is a sheet, not a ball: it runs sideways
+    // through the charge layer for kilometres and is only a few hundred metres thick, so the
+    // sheet below is far wider than it is tall, and it sits at the origin — the flash is inside
+    // the cloud, and the light reaches us through the cloud base.
+    float dy = texCoord.y - L.origin.y; // + is up, in domain heights
 
-    // Sheet lightning: a broad, soft ellipse of light inside the cloud.
-    float sheet = exp(-(dx * dx + cy * cy * 1.8) / 0.045) * 1.5 + exp(-(dx * dx + cy * cy * 2.4) / 0.16) * 0.35;
-    // Light diffused through a kilometre of cloud has lost the colour of the plasma: it comes
-    // out as the cooler end of the range, which is why an IC flash reads blue, not white.
-    emitted += blackbodyRGB(6500.0) * sheet * cloudMask * bright;
+    // ── the discharge sheet ──
+    // Two Gaussians, the inner one narrow enough to read as a source. Cloud does not transmit
+    // light evenly: the deck is heavy in some places and thin in others, so the glow is broken
+    // up by two slow octaves of noise instead of being a smooth ellipse, which is what made an
+    // IC flash look like a soft blob painted on the sky.
+    float n1 = textureLod(noiseTex, vec2(dx * 0.65 + 0.13, dy * 2.2 + 0.41), 0.0).r;
+    float n2 = textureLod(noiseTex, vec2(dx * 1.90 - 0.27, dy * 5.5 + 0.07), 0.0).g;
+    // Contrastier than a plain sum, so the deck breaks into lit patches with gaps between them
+    // instead of a smooth dome with grain on it. Real IC light comes through the thinner parts.
+    float mottle = 0.10 + 1.70 * smoothstep(0.22, 0.78, n1) + 0.55 * n2;
 
-    // Crawlers grow outward from the discharge point as the flash develops. They may only be
-    // drawn inside the texture: outside it the sampler clamps to the edge column and a single
-    // bright texel there would be smeared across the sky as a hard line.
-    // auto LOD here: the crawler filaments are thin, and sampling them without mipmaps makes
-    // them break up into a dotted mess at any distance
-    // The crawler map only spans the width of one bolt, which is a small patch of sky; a real
-    // IC network streaks across a kilometre of cloud base, so the lookup is stretched to spread
-    // it over the deck. That also turns the filaments into long horizontal streaks, which is
-    // exactly what spider lightning looks like from below.
-    // A level of mip bias on top of the auto LOD: a filament is barely a texel wide, and at
-    // close zoom a sharp lookup turns the network into a dotted line.
-    vec2 uvIC = vec2(0.5 + (uv.x - 0.5) * 0.42, uv.y);
-    vec4 ch = texture(lightningTex, clamp(uvIC, vec2(0.002), vec2(0.998)), 1.0);
-    float reach = clamp(L.age / 0.45, 0.0, 1.0); // the network spreads over the first half second
-    float r = abs(uv.x - 0.5) * 2.0;
-    float growth = 1.0 - smoothstep(reach - 0.30, reach, r);
-    float inside = step(0.0, uv.y) * step(uv.y, 1.0) * step(0.002, uv.x) * step(uv.x, 0.998);
-    float filament = smoothstep(0.04, 0.50, ch.b) * growth * inside;
-    // Seen through the cloud base, so it is dim and blue rather than a white channel, and it
-    // sits inside a soft haze of its own scattered light.
-    float haze = smoothstep(0.0, 0.45, ch.b) * growth * inside;
-    emitted += blackbodyRGB(9000.0) * filament * bright * 1.4;
-    emitted += blackbodyRGB(7000.0) * haze * bright * 0.22;
+    // The sheet is deliberately kept below the bloom threshold almost everywhere: it is diffuse
+    // light inside the cloud, not a source. Only the filaments, which carry current, are allowed
+    // to blow out. At bloom strength 7.25 a sheet this broad above the threshold turned the whole
+    // deck into a floodlight.
+    float sheet = exp(-(dx * dx) / 0.032 - (dy * dy) / 0.0090) * 0.42
+                + exp(-(dx * dx) / 0.150 - (dy * dy) / 0.0450) * 0.15;
+
+    // What you see from the ground is not the discharge, it is the cloud being lit from inside:
+    // the deck is the diffuser, not an obstacle in front of it. So the sheet is weighted towards
+    // the cloud rather than away from it — the opposite of a ground strike, where the cloud is
+    // merely lit from below and the channel itself carries the light.
+    // The light has to land on cloud to be seen at all. An IC flash is inside the deck, so from
+    // the ground it shows up as the cloud lighting up, and in clear air beside the deck there is
+    // nothing to light: without this factor the flash painted a glowing blob in the sky wherever
+    // it was put, which is what made it look like a lamp rather than like lightning.
+    float inCloud = smoothstep(0.10, 0.60, cloudMask);
+    // Diffused through cloud, the plasma's colour is gone: what is left is the blue-violet end.
+    vec3 sheetCol = mix(blackbodyRGB(6200.0), vec3(0.50, 0.64, 1.00), 0.45);
+    emitted += sheetCol * sheet * mottle * (0.25 + 0.95 * inCloud) * (0.10 + 0.90 * cloudCover) * bright;
+
+    // ── the crawler network ──
+    // The crawler map is a spider network lying in a shallow band of the texture. It is mapped
+    // here onto a slab roughly one domain half-width across and a few hundred metres thick, so
+    // the filaments come out horizontal: stretched along the cloud base, the way spider
+    // lightning is photographed from below.
+    const float IC_HORIZ = 0.95;  // domain heights covered by the width of the map
+    const float IC_VERT = 0.50;   // domain heights covered by the height of the map
+    const float IC_BAND = 0.10;   // where the network sits inside the map
+    vec2 icUV = vec2(0.5 + dx / IC_HORIZ, IC_BAND + dy / IC_VERT);
+
+    // Every mask here is smooth. The old code multiplied the crawlers by a `step()` on the
+    // lookup coordinates, which drew the edge of the sampled rectangle as a lit square around
+    // the flash — a box of glow with the network inside it. A window in physical space has no
+    // edge to see: it is the same falloff whichever way the map is stretched.
+    float window = exp(-(dx * dx) / 0.0900 - (dy * dy) / 0.0120);
+
+    // The network spreads outward from the discharge point over the first half second.
+    float reach = 0.30 + 0.70 * clamp(L.age / 0.40, 0.0, 1.0);
+    float radial = length(vec2(dx / 0.62, dy / 0.16));
+    float grow = 1.0 - smoothstep(reach - 0.30, reach, radial);
+
+    // One level of mip bias: a filament is barely a texel wide, and a sharp lookup turns the
+    // network into a dotted mess once the camera is more than a few kilometres away.
+    vec4 ch = texture(lightningTex, clamp(icUV, vec2(0.004), vec2(0.996)), 1.0);
+    float filament = smoothstep(0.03, 0.42, ch.b) * grow * window;
+    float haze = smoothstep(0.0, 0.32, ch.b) * grow * window;
+
+    // Filaments are light escaping through the base, so they are only visible where the deck is
+    // thin; under a dense base the same current shows as nothing but the sheet above.
+    float thin = mix(0.20, 1.0, 1.0 - cloudMask);
+    emitted += blackbodyRGB(9500.0) * filament * thin * bright * 5.0;
+    emitted += blackbodyRGB(7000.0) * haze * thin * bright * 0.35;
 
   }
 
@@ -441,7 +477,7 @@ vec3 lightningSceneLight(Lightning L, float bright)
   // light on a couple of pixels and leaves the rest of the scene black. The falloff below is
   // gentle close in and reaches much further out.
   vec3 tint = L.ic > 0.5 ? vec3(0.70, 0.78, 1.00) : vec3(0.76, 0.84, 1.00);
-  float scale = L.ic > 0.5 ? 0.012 : 0.030;
+  float scale = L.ic > 0.5 ? 0.022 : 0.030;
   return tint * (scale / (d2 + 0.02)) * bright;
 }
 
@@ -625,7 +661,7 @@ vec4 getAirColor(vec2 fragCoordIn)
     float leader;
     float strikeBright = flashBrightness(strike, leader);
     if (strikeBright > 0.0005 || leader > 0.0005)
-      emittedLight += lightningEmission(strike, strikeBright, leader, cloudDensity);
+      emittedLight += lightningEmission(strike, strikeBright, leader, cloudDensity, cloudOpacity);
   }
 
   return vec4(color, opacity);
