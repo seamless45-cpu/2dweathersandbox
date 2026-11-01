@@ -359,14 +359,16 @@ vec3 lightningEmission(Lightning L, float bright, float leader, float cloudDensi
     // and a wide atmospheric glow. The amplitudes are in tone-mapped units: the stroke itself
     // has to blow out, and the halo has to fall away to a faint blue tinge a few hundred metres
     // out. Any brighter than this and the whole bolt reads as a solid bar of white.
-    // The tight term is multiplied by the channel itself. It is a function of the horizontal
-    // distance from the strike axis only, so on its own it draws a perfectly straight vertical
-    // line the full height of the bolt, and the zig-zag of the channel then reads as a bolt
-    // wrapped around a wire. Gating it on `core` makes it hug the stroke instead, while the wide
-    // term stays smooth: that one is light scattered out of a column of air, which really is
-    // straight.
+    // Both terms are functions of the horizontal distance from the strike axis only, so on their
+    // own they draw a perfectly straight vertical line the full height of the bolt and the
+    // zig-zag of the channel reads as a bolt wrapped around a wire. That line was the last thing
+    // left in the tail of a flash, when everything else had faded: a faint but unmistakable
+    // straight thread hanging in the sky. Weighting them by the channel keeps the tight sheath on
+    // the stroke; the wide term keeps a quarter of its strength unweighted, because light
+    // scattered out of a column of air really is smooth and does not follow the zig-zag.
+    float channel = max(core, sheath);
     float halo = exp(-dx * dx / 0.00003) * 0.42 * core
-               + exp(-dx * dx / 0.0008) * 0.085;
+               + exp(-dx * dx / 0.0008) * 0.085 * mix(0.25, 1.0, channel);
     emitted += colHalo * halo * bright * visible;
 
     // Strike point: a blown-out spot plus a wide splash of light running along the ground,
