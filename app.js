@@ -6010,7 +6010,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     var realTemp = Math.max(map_range(altitude, 0, 12000, 15.0, -70.0), -60);
 
     initial_T[y] = realToPotentialT(CtoK(realTemp), y); // initial temperature profile
-    initial_W[y] = maxWater(CtoK(realTemp) + (y < sim_res_y * 0.60 ? 5.0 : -2.0)); // strongly-saturated layer, tall (matches setupShader.frag)
+    initial_W[y] = maxWater(CtoK(realTemp)); // fallback only: the live humidity profile is built in setupShader.frag
   }
 
   // generate sounding data for forcing in sim

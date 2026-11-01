@@ -452,20 +452,20 @@
       return {
         angle : angle,
         length : len,
-        // Strokes are deliberately fat. The display reads this map about two and a half to one
-        // smaller vertically than horizontally, so a one pixel filament averages down to a third
-        // of its coverage and the network dissolves into speckle. Three to five pixels wide in
-        // the map survives that and lands as a thin bright line on screen.
-        wTop : width,
-        wBot : Math.max(0.7, width * 0.30),
+        // Strokes are deliberately fat. The display squeezes this network into a patch about a
+        // third of the screen wide, so a 3 px stroke would land under a pixel and dissolve into
+        // dashes instead of reading as a filament. The IC channels are therefore drawn about 1.7x
+        // fatter than a CG channel: on screen they are still thin, bright lines.
+        wTop : width * 1.7,
+        wBot : Math.max(1.2, width * 0.52),
         taperPow : 0.75,
         segLen : h / 150,
         // `hold` gives the angular geometry real channels have: a long straight run, a sharp
         // turn, another run. Smooth meandering (spring damping) is what made these read as soft
         // wavy lines rather than as lightning.
         hold : true,
-        kink : 0.85,
-        zigzag : 0.55,
+        kink : 1.55,
+        zigzag : 0.80,
         micro : 0.02,
         sub : 3,
         axisDrift : 0.010,
@@ -509,15 +509,18 @@
     }
 
     // Trunks radiate from a common region, which is what makes spider lightning look like a crown
-    // rather than like a set of parallel scratches.
-    const trunks = 10 + Math.floor(rng() * 5);
+    // rather than like a set of parallel scratches. The count is low on purpose: a dozen trunks
+    // plus their forks filled the map so densely that the display, which squeezes it down to a
+    // patch of the sky, could only show the whole thing as a bright smear. Fewer, longer channels
+    // keep their geometry at that scale.
+    const trunks = 6 + Math.floor(rng() * 3);
     for (let t = 0; t < trunks; t++) {
       const dir = t % 2 === 0 ? 1 : -1;
       const spread = (rng() - 0.5) * 1.30; // up to ~37 degrees off horizontal
       const x = w * 0.5 + (rng() - 0.5) * w * 0.30;
       const y = bandY + (rng() - 0.5) * h * 0.26;
       branch(x, y, dir * Math.PI * 0.5 + spread,
-             w * (0.12 + rng() * 0.26),
+             w * (0.20 + rng() * 0.30),
              2.6 + rng() * 1.2,
              2,
              0.8 + rng() * 0.2);
@@ -525,10 +528,10 @@
 
     // A few shorter channels tying the crown together, so it reads as one network rather than as
     // separate flashes that happen to be next to each other.
-    for (let b = 0; b < 6; b++)
+    for (let b = 0; b < 3; b++)
       branch(w * (0.15 + rng() * 0.7), bandY + (rng() - 0.5) * h * 0.30,
              (rng() < 0.5 ? -1 : 1) * (0.2 + rng() * 1.1),
-             w * (0.08 + rng() * 0.16),
+             w * (0.14 + rng() * 0.22),
              1.5 + rng() * 0.8,
              1,
              0.40 + rng() * 0.35);
